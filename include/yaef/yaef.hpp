@@ -2403,8 +2403,9 @@ private:
         template<typename RandomAccessIterT>
         _YAEF_ATTR_NODISCARD static sorted_seq_info
         create(RandomAccessIterT first, RandomAccessIterT last) {
-            if (first > last || !std::is_sorted(first, last))
+            if (first > last || !std::is_sorted(first, last)) {
                 return sorted_seq_info{false, 0, 0, 0};
+            }
             return sorted_seq_info{
                 true,
                 static_cast<size_type>(std::distance(first, last)),
@@ -3051,6 +3052,7 @@ public:
     eliasfano_sparse_bitmap(eliasfano_sparse_bitmap &&other, const allocator_type &alloc)
         : pos_list_(std::move(other), alloc), num_bits_(details::exchange(other.num_bits_, 0)) { }
 
+    // Construct from the data of a plain bitmap (the number of indexed bits is unknown).
     eliasfano_sparse_bitmap(const uint64_t *blocks, size_type num_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
@@ -3085,6 +3087,7 @@ public:
         pos_list_ = eliasfano_list<size_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
     }
 
+    // Construct from the data of a plain bitmap (the number of indexed bits is known).
     eliasfano_sparse_bitmap(const uint64_t *blocks, size_type num_bits, 
                             size_type num_indexed_bits, const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
@@ -3102,12 +3105,39 @@ public:
         pos_list_ = eliasfano_list<size_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
     }
 
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT>
+#else
+    template<typename RandomAccessIterT, 
+             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
+#endif
+    eliasfano_sparse_bitmap(size_t num_bits, RandomAccessIterT indices_first, RandomAccessIterT indices_last,
+                            const allocator_type &alloc = allocator_type{})
+        : num_bits_(num_bits) {
+        pos_list_ = eliasfano_list<size_type>{indices_first, indices_last, alloc};
+    }
+
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT>
+#else
+    template<typename RandomAccessIterT, 
+             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
+#endif
+    eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, 
+                            RandomAccessIterT indices_first, RandomAccessIterT indices_last,
+                            const allocator_type &alloc = allocator_type{})
+        : num_bits_(num_bits) {
+        pos_list_ = eliasfano_list<size_type>{from_sorted, indices_first, indices_last, alloc};
+    }
+
+    // Construct from the indices of indexed bits.
     eliasfano_sparse_bitmap(size_t num_bits, const size_type *indices, size_t num_indexed_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type>{indices, indices + num_indexed_bits, alloc};
     }
 
+    // Construct from the indices of indexed bits and indices are aussumed to be sorted.
     eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, const size_type *indices, size_t num_indexed_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
