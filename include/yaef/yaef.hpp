@@ -3255,7 +3255,7 @@ private:
 
     class index_related_impl {
     public:
-        index_related_impl(eliasfano_sparse_bitmap *parent) noexcept
+        index_related_impl(const eliasfano_sparse_bitmap *parent) noexcept
             : parent_(parent) { }
 
         _YAEF_ATTR_NODISCARD value_type at(size_type index) const noexcept {
@@ -3271,7 +3271,7 @@ private:
         }
 
     private:
-        eliasfano_sparse_bitmap *parent_;
+        const eliasfano_sparse_bitmap *parent_;
 
         _YAEF_ATTR_NODISCARD value_type at_impl(size_type index, std::true_type) const noexcept {
             return parent_->pos_list_.contains(index);
