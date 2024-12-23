@@ -2,12 +2,15 @@ cmake_minimum_required(VERSION 3.15)
 
 project(yaef VERSION 0.1.0 LANGUAGES C CXX)
 
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+
 set(YAEF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-set(YAEF_OPTS_ENABLE_TESTS OFF "enable unit tests")
-set(YAEF_OPTS_ENABLE_BENCHMARKS OFF "enable benchmarks")
+option(YAEF_OPTS_ENABLE_TESTS "enable unit tests" OFF)
+option(YAEF_OPTS_ENABLE_BENCHMARKS "enable benchmarks" OFF)
 
-set(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT OFF "(DEV-only) output the intemediate assembly code")
+set(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT "(DEV-only) output the intemediate assembly code" OFF)
 
 add_library(yaef INTERFACE)
 add_library(yaef::yaef ALIAS yaef)
