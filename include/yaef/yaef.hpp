@@ -136,7 +136,7 @@
 #   define _YAEF_STATIC_ASSERT_NOMSG(...) static_assert(__VA_ARGS__)
 #endif
 
-#if __cplusplus < 201402L
+#if __cplusplus <= 201402L
 #   define _YAEF_TRAIT_VAR(_trait, ...) _trait<__VA_ARGS__>::value
 #else
 #   define _YAEF_TRAIT_VAR(_trait, ...) _trait ## _v <__VA_ARGS__>
@@ -201,7 +201,7 @@ enum class error_code : uint32_t {
 #else
 #   define _YAEF_RETURN_ERR_IF_FAIL(...) \
         do { \
-            ::yaef::error_code ec = (__VA_ARGS__) \
+            ::yaef::error_code ec = (__VA_ARGS__); \
             if (ec != ::yaef::error_code::success) { return ec; } \
         } while (false);
 #endif
@@ -1386,7 +1386,7 @@ public:
 #if _YAEF_USE_CXX_CONCEPTS
     template<std::bidirectional_iterator IterT = InputIterT>
 #else
-    template<typename IterT = InputIterT, typename = typename std::enable_if<is_bidirectional_iter<IterT>>::type>
+    template<typename IterT = InputIterT, typename = typename std::enable_if<is_bidirectional_iter<IterT>::value>::type>
 #endif
     eliasfano_encoder_scalar_impl(IterT first, IterT last)
         : first_(first), last_(last), size_(std::distance(first, last)),

@@ -18,7 +18,9 @@ benchmark_inputs<IntT> generate_random(size_t num, IntT min = std::numeric_limit
     return benchmark_inputs<IntT>::from_datagen(min, max, num);
 }
 
-int main(int argc, const char *argv[]) {
+int main(int argc, char *argv[]) {
+    (void)(argc);
+    (void)(argv);
     using int_type = uint64_t;
     constexpr size_t NUM_INTS = 5000000;
 
