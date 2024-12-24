@@ -24,7 +24,7 @@ int main(int argc, char *argv[]) {
     using int_type = uint64_t;
     constexpr size_t NUM_INTS = 5000000;
 
-    auto inputs = generate_random<int_type>(NUM_INTS);
+    auto inputs = generate_random<int_type>(NUM_INTS, 0, std::numeric_limits<int_type>::max() / 100);
 
 #define REPORT_BENCHMARK(_name) \
     { _name<int_type> b; b.run(inputs); b.report(); }

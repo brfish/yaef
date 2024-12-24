@@ -1,6 +1,7 @@
 #include <iostream>
 #include <map>
 
+#include "catch2/generators/catch_generators.hpp"
 #include "catch2/catch_test_macros.hpp"
 
 #include "yaef/utils/int_generator.hpp"
@@ -85,6 +86,25 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         double ratio2 = static_cast<double>(compact_size_in_bytes) / static_cast<double>(packed_size_in_bytes);
         std::cout << "ratio1: " << ratio1 * 100.0 << "%\n"
                   << "ratio2: " << ratio2 * 100.0 << "%\n";
+    }
+
+    SECTION("construct from small sorted unsigned integer list and random access") {
+        const size_t num_ints = GENERATE(1, 2, 5, 64, 65, 128, 4095);
+
+        using int_type = uint32_t;
+        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
+                                                         std::numeric_limits<int_type>::max(),
+                                                         yaef::utils::make_random_seed()};
+        auto ints = gen.make_sorted_list(num_ints);
+
+        yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
+        REQUIRE(list.size() == ints.size());
+
+        for (size_t i = 0; i < ints.size(); ++i) {
+            int64_t expected = ints[i];
+            int64_t actual = list.at(i);
+            REQUIRE(expected == actual);
+        }
     }
 
     SECTION("lower_bound and upper_bound") {

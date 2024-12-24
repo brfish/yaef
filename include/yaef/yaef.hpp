@@ -142,6 +142,9 @@
 #   define _YAEF_TRAIT_VAR(_trait, ...) _trait ## _v <__VA_ARGS__>
 #endif
 
+//#define _YAEF_ASSERT(_expr) assert(_expr)
+#define _YAEF_ASSERT(_expr) do { if (!(_expr)) { __builtin_trap(); } } while (false)
+
 #ifdef __BMI2__
 #   define _YAEF_INTRINSICS_HAVE_BMI2 1
 #elif defined(_MSC_VER) && defined(__AVX2__)
@@ -604,17 +607,17 @@ static constexpr uint64_t MSB_MASK_LUT64[65] = {
 };
 
 _YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_lsb1(uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return LSB_MASK_LUT64[n];
 }
 
 _YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_msb1(uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return MSB_MASK_LUT64[n];
 }
 
 _YAEF_ATTR_NODISCARD inline bool get_bit(uint64_t block, uint32_t index) noexcept {
-    assert(index < 64);
+    _YAEF_ASSERT(index < 64);
 #ifdef _MSC_VER
     return _bittest64(reinterpret_cast<__int64 *>(&block), index);
 #else
@@ -623,59 +626,59 @@ _YAEF_ATTR_NODISCARD inline bool get_bit(uint64_t block, uint32_t index) noexcep
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t set_bit(uint64_t block, uint32_t index) noexcept {
-    assert(index < 64);
+    _YAEF_ASSERT(index < 64);
     return block | (static_cast<uint64_t>(1) << index);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t clear_bit(uint64_t block, uint32_t index) noexcept {
-    assert(index < 64);
+    _YAEF_ASSERT(index < 64);
     return block & ~(static_cast<uint64_t>(1) << index);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t set_bit(uint64_t block, uint32_t index, bool value) noexcept {
-    assert(index < 64);
+    _YAEF_ASSERT(index < 64);
     return (block & ~(static_cast<uint64_t>(1) << index)) | 
            (static_cast<uint64_t>(value) << index);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t extract_bits(uint64_t block, uint32_t first, uint32_t last) noexcept {
-    assert(first < 64);
-    assert(last <= 64);
-    assert(first <= last);
+    _YAEF_ASSERT(first < 64);
+    _YAEF_ASSERT(last <= 64);
+    _YAEF_ASSERT(first <= last);
     return (block >> first) & make_mask_lsb1(last - first);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t extract_first_bits(uint64_t block, uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return block & make_mask_lsb1(n);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t extract_last_bits(uint64_t block, uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return rotate_left(block, n) & make_mask_lsb1(n);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t set_bits(uint64_t block, uint32_t offset, uint64_t value, uint32_t n) noexcept {
-    assert(offset < 64);
-    assert(n <= 64);
-    assert(offset + n <= 64);
+    _YAEF_ASSERT(offset < 64);
+    _YAEF_ASSERT(n <= 64);
+    _YAEF_ASSERT(offset + n <= 64);
     uint64_t bits = extract_first_bits(value, n);
     uint64_t block_mask = ((~make_mask_lsb1(n)) << offset) | make_mask_lsb1(offset);
     return (block & block_mask) | (bits << offset);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t set_first_bits(uint64_t block, uint64_t value, uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return (block & (~make_mask_lsb1(n))) | extract_first_bits(value, n);
 }
 
 _YAEF_ATTR_NODISCARD inline uint64_t set_last_bits(uint64_t block, uint64_t value, uint32_t n) noexcept {
-    assert(n <= 64);
+    _YAEF_ASSERT(n <= 64);
     return (block & (~make_mask_msb1(n))) | rotate_right(extract_first_bits(value, n), n);
 }
 
 _YAEF_ATTR_NODISCARD inline uint32_t select_one(uint64_t block, uint32_t k) noexcept {
-    assert(k < 64);
+    _YAEF_ASSERT(k < 64);
 #if _YAEF_INTRINSICS_HAVE_BMI2
     return count_trailing_zero(_pdep_u64(static_cast<uint64_t>(1) << k, block));
 #else
@@ -685,7 +688,7 @@ _YAEF_ATTR_NODISCARD inline uint32_t select_one(uint64_t block, uint32_t k) noex
 }
 
 _YAEF_ATTR_NODISCARD inline uint32_t select_zero(uint64_t block, uint32_t k) noexcept {
-    assert(k < 64);
+    _YAEF_ASSERT(k < 64);
     return select_one(~block, k);
 }
 
@@ -735,7 +738,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         const size_type bit_index = index * width();
         const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
 
@@ -750,7 +753,7 @@ public:
     }
 
     void set_value(size_type index, value_type value) noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         const size_type bit_index = index *width();
         const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
 
@@ -767,25 +770,25 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD bool get_bit(size_type index) const noexcept {
-        assert(index < size() * width());
+        _YAEF_ASSERT(index < size() * width());
         auto info = locate_block(index);
         return bits64::get_bit(*info.first, info.second);
     }
 
     void set_bit(size_type index, bool value) noexcept {
-        assert(index < size() * width());
+        _YAEF_ASSERT(index < size() * width());
         auto info = locate_block(index);
         *info.first = bits64::set_bit(*info.first, info.second, value);
     }
 
     void set_bit(size_type index) noexcept {
-        assert(index < size() * width());
+        _YAEF_ASSERT(index < size() * width());
         auto info = locate_block(index);
         *info.first = bits64::set_bit(*info.first, info.second);
     }
 
     void clear_bit(size_type index) noexcept {
-        assert(index < size() * width());
+        _YAEF_ASSERT(index < size() * width());
         auto info = locate_block(index);
         *info.first = bits64::clear_bit(*info.first, info.second);
     }
@@ -875,25 +878,25 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type get_bit(size_type index) const noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         auto info = locate_block(index);
         return bits64::get_bit(*info.first, info.second);
     }
 
     void set_bit(size_type index, value_type value) noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         auto info = locate_block(index);
         *info.first = bits64::set_bit(*info.first, info.second, value);
     }
 
     void set_bit(size_type index) noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         auto info = locate_block(index);
         *info.first = bits64::set_bit(*info.first, info.second);
     }
 
     void clear_bit(size_type index) noexcept {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         auto info = locate_block(index);
         *info.first = bits64::clear_bit(*info.first, info.second);
     }
@@ -1063,7 +1066,7 @@ public:
     bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks) noexcept
         : blocks_cur_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
-        assert(num_blocks != 0);
+        _YAEF_ASSERT(num_blocks != 0);
         move_to_first_non_empty_block();
         update_cache();
     }
@@ -1071,8 +1074,8 @@ public:
     bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks, size_type num_skipped_bits) noexcept
         : blocks_cur_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
-        assert(num_blocks != 0);
-        assert(idiv_ceil(num_skipped_bits, BLOCK_WIDTH) <= num_blocks);
+        _YAEF_ASSERT(num_blocks != 0);
+        _YAEF_ASSERT(idiv_ceil(num_skipped_bits, BLOCK_WIDTH) <= num_blocks);
 
         const size_type num_full_blocks = num_skipped_bits / BLOCK_WIDTH,
                         num_residual_bits = num_skipped_bits % BLOCK_WIDTH;
@@ -1096,7 +1099,7 @@ public:
         : bitset_foreach_cursor(bits.blocks(), bits.num_blocks(), num_skipped_bits) { }
     
     _YAEF_ATTR_NODISCARD size_type current() const noexcept {
-        assert(is_valid());
+        _YAEF_ASSERT(is_valid());
         return skipped_blocks_ * BLOCK_WIDTH + cached_;
     }
 
@@ -1376,7 +1379,7 @@ public:
                                   value_type min, value_type max, uint32_t low_width)
         : first_(first), last_(last), size_(std::distance(first, last)), 
           min_(min), max_(max), low_width_(low_width) {
-        assert(low_width_ > 0 && low_width_ <= 64);
+        _YAEF_ASSERT(low_width_ > 0 && low_width_ <= 64);
     }
     
     eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, value_type min, value_type max)
@@ -1511,23 +1514,25 @@ public:
             sampler(AllocT &alloc, size_type num_bits, size_type num_zeros_or_ones)
                 : alloc_(alloc), num_zeros_or_ones_(num_zeros_or_ones), num_scanned_(0), 
                   last_sample_(0), max_uniform_subsample_(0), max_each_one_subsample_(0) {
-                size_t num_samples = bits64::idiv_ceil(num_zeros_or_ones, position_samples::SAMPLE_RATE);
-                if ((num_zeros_or_ones - 1) % position_samples::SAMPLE_RATE != 0) {
-                    ++num_samples;
+                if (num_zeros_or_ones != 0) {
+                    size_t num_samples = bits64::idiv_ceil(num_zeros_or_ones, position_samples::SAMPLE_RATE) + 1;
+                    const uint32_t width = bits64::bit_width(num_bits);
+                    samples_store_ = allocate_packed_ints(alloc, width, num_samples);
                 }
-                const uint32_t width = bits64::bit_width(num_bits);
-                samples_store_ = allocate_packed_ints(alloc, width, num_samples);
             }
 
             void try_sample(size_type pos) {
+                _YAEF_ASSERT(num_zeros_or_ones_ != 0);
+
                 constexpr size_type SAMPLE_RATE = position_samples::SAMPLE_RATE;
                 const size_type block_index = num_scanned_ / SAMPLE_RATE, block_offset = num_scanned_ % SAMPLE_RATE;
                 if (block_offset == 0) {
                     samples_store_.set_value(block_index, pos);
                 } else {
                     size_type ref_delta = pos - samples_store_.get_value(block_index);
-                    if (num_scanned_ % position_samples::UNIFORM_SUBSAMPLE_RATE == 0)
+                    if (num_scanned_ % position_samples::UNIFORM_SUBSAMPLE_RATE == 0) {
                         max_uniform_subsample_ = std::max(max_uniform_subsample_, ref_delta);
+                    }
                     max_each_one_subsample_ = std::max(max_each_one_subsample_, ref_delta);
                 }
                 ++num_scanned_;
@@ -1535,9 +1540,11 @@ public:
             }
 
             _YAEF_ATTR_NODISCARD position_samples finish() {
-                if ((num_zeros_or_ones_ - 1) % position_samples::SAMPLE_RATE != 0) {
-                    samples_store_.set_value(samples_store_.size() - 1, last_sample_);
+                if (num_zeros_or_ones_ == 0) {
+                    return position_samples{};
                 }
+
+                samples_store_.set_value(samples_store_.size() - 1, last_sample_);
 
                 size_type num_uniform_sample_blocks = 0;
                 size_type num_each_one_sample_blocks = 0;
@@ -1642,8 +1649,9 @@ public:
                     size_type sample = samples_.get_samples().get_value(block_index);
                     size_type ref_delta = pos - sample;
                     if (type == position_samples::subsampler_type::uniform) {
-                        if (num_scanned_ % UNIFORM_SAMPLE_RATE == 0)
+                        if (num_scanned_ % UNIFORM_SAMPLE_RATE == 0) {
                             subsamples.set_value(uniform_writer_index_++, ref_delta);
+                        }
                     } else {
                         subsamples.set_value(each_one_writer_index_++, ref_delta);
                     }
@@ -1664,11 +1672,13 @@ public:
         
         subsampler one_subsampler{one_samples_};
         subsampler zero_subsampler{zero_samples_};
+        bool need_init_one_subsamples = !one_samples_.get_subsample_block_infos().empty();
+        bool need_init_zero_subsamples = !zero_samples_.get_subsample_block_infos().empty();
 
         for (size_type i = 0; i < bits.size(); ++i) {
-            if (bits.get_bit(i) == true) {
+            if (need_init_one_subsamples && bits.get_bit(i) == true) {
                 one_subsampler.try_sample(i);
-            } else {
+            } else if (need_init_zero_subsamples) {
                 zero_subsampler.try_sample(i);
             }
         }
@@ -1804,6 +1814,14 @@ private:
             subsampler_type type = static_cast<subsampler_type>(static_cast<bool>(lut_entry & lut_entry_mask));
             uint64_t subsample_start = lut_entry & (~lut_entry_mask);
             return std::make_pair(type, subsample_start);
+        }
+
+        _YAEF_ATTR_NODISCARD const bits64::packed_int_view &get_subsample_block_infos() const noexcept {
+            return subsample_info_;
+        }
+
+        _YAEF_ATTR_NODISCARD bits64::packed_int_view &get_subsample_block_infos() noexcept {
+            return subsample_info_;
         }
 
         _YAEF_ATTR_NODISCARD sample_find_result 
@@ -2060,7 +2078,7 @@ public:
           min_(min), index_(index) { }
 
     _YAEF_ATTR_NODISCARD value_type operator*() const noexcept {
-        assert(low_bits_.blocks() != nullptr);
+        _YAEF_ASSERT(low_bits_.blocks() != nullptr);
         uint64_t high = high_bits_cursor_.current() - index_ - 1;
         uint64_t low = low_bits_.get_value(index_);
         uint64_t merged = static_cast<uint64_t>((high << low_bits_.width()) | low);
@@ -2281,7 +2299,7 @@ public:
     _YAEF_ATTR_NODISCARD const_iterator cend() const noexcept { return end(); }
 
     _YAEF_ATTR_NODISCARD const_iterator iter(size_type index) const _YAEF_MAYBE_NOEXCEPT {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         if (_YAEF_UNLIKELY(index >= size())) {
             _YAEF_THROW(std::out_of_range{"index is out of range"});
         }
@@ -2289,7 +2307,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type front() const _YAEF_MAYBE_NOEXCEPT {
-        assert(!empty());
+        _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
             _YAEF_THROW(std::out_of_range{"the list is empty"});
         }
@@ -2297,7 +2315,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type back() const _YAEF_MAYBE_NOEXCEPT {
-        assert(!empty());
+        _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
             _YAEF_THROW(std::out_of_range{"the list is empty"});
         }
@@ -2305,7 +2323,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type min() const _YAEF_MAYBE_NOEXCEPT { 
-        assert(!empty());
+        _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
             _YAEF_THROW(std::out_of_range{"the list is empty"});
         }
@@ -2313,7 +2331,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type max() const _YAEF_MAYBE_NOEXCEPT { 
-        assert(!empty());
+        _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
             _YAEF_THROW(std::out_of_range{"the list is empty"});
         }
@@ -2321,7 +2339,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         if (_YAEF_UNLIKELY(index >= size())) {
             _YAEF_THROW(std::out_of_range{"index is out of range"});
         }
@@ -2419,8 +2437,8 @@ private:
         template<typename RandomAccessIterT>
         _YAEF_ATTR_NODISCARD static sorted_seq_info 
         unchecked_create(RandomAccessIterT first, RandomAccessIterT last) {
-            assert(first <= last);
-            assert(std::is_sorted(first, last));
+            _YAEF_ASSERT(first <= last);
+            _YAEF_ASSERT(std::is_sorted(first, last));
             return sorted_seq_info{
                 true,
                 static_cast<size_type>(std::distance(first, last)),
@@ -2433,7 +2451,7 @@ private:
     template<typename RandomAccessIterT>
     void unchecked_init_with_low_width(RandomAccessIterT first, RandomAccessIterT last, 
                                        sorted_seq_info sorted_info, uint32_t low_width) {
-        assert(low_width > 0);
+        _YAEF_ASSERT(low_width > 0);
         min_ = sorted_info.min;
 
         using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT>;
@@ -2493,7 +2511,7 @@ private:
 #ifdef NDEBUG
         _YAEF_UNUSED(other_alloc);
 #endif
-        assert(get_alloc() == other_alloc);
+        _YAEF_ASSERT(get_alloc() == other_alloc);
     }
 
     _YAEF_ATTR_NODISCARD const_iterator make_iter(size_type high_bit_offset, size_type index) const noexcept {
@@ -2920,7 +2938,7 @@ private:
 #ifdef NDEBUG
         _YAEF_UNUSED(other_alloc);
 #endif
-        assert(get_alloc() == other_alloc);
+        _YAEF_ASSERT(get_alloc() == other_alloc);
     }
 
     // Bitfields cannot be bound to reference.
@@ -3180,7 +3198,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
-        assert(index < size());
+        _YAEF_ASSERT(index < size());
         if (_YAEF_UNLIKELY(index >= size())) {
             _YAEF_THROW(std::out_of_range{"index is out of range"});
         }
@@ -3200,7 +3218,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD size_type rank_one(size_type index) const noexcept {
-        assert(index <= count_one());
+        _YAEF_ASSERT(index <= size());
         return index_related_impl{this}.rank_one(index);
     }
 
@@ -3209,7 +3227,7 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD size_type select(size_type rank) const _YAEF_MAYBE_NOEXCEPT {
-        assert(rank < pos_list_.size());
+        _YAEF_ASSERT(rank < pos_list_.size());
         return pos_list_.at(rank);
     }
 
