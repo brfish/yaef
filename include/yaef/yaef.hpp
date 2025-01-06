@@ -3222,15 +3222,12 @@ public:
         return pos_list_.space_usage_in_bytes();
     }
 
-    _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
+    _YAEF_ATTR_NODISCARD value_type at(size_type index) const noexcept {
         _YAEF_ASSERT(index < size());
-        if (_YAEF_UNLIKELY(index >= size())) {
-            _YAEF_THROW(std::out_of_range{"index is out of range"});
-        }
         return index_related_impl{this}.at(index);
     }
 
-    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const _YAEF_MAYBE_NOEXCEPT {
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {
         return at(index);
     }
 
@@ -3247,8 +3244,17 @@ public:
         return index_related_impl{this}.rank_one(index);
     }
 
+    _YAEF_ATTR_NODISCARD size_type rank_one(size_type index, bool &bit_out) const noexcept {
+        _YAEF_ASSERT(index <= size());
+        return index_related_impl{this}.rank_one(index, &bit_out);
+    }
+
     _YAEF_ATTR_NODISCARD size_type rank_zero(size_type index) const noexcept {
         return size() - rank_one(index);
+    }
+
+    _YAEF_ATTR_NODISCARD size_type rank_zero(size_type index, bool &bit_out) const noexcept {
+        return size() - rank_one(index, bit_out);
     }
 
     _YAEF_ATTR_NODISCARD size_type select(size_type rank) const _YAEF_MAYBE_NOEXCEPT {
@@ -3313,6 +3319,10 @@ private:
             return rank_one_impl(index, std::integral_constant<bool, INDEXED_BIT_TYPE>{});
         }
 
+        _YAEF_ATTR_NODISCARD size_type rank_one(size_type index, bool *bit_out) const noexcept {
+            return rank_one_impl(index, bit_out, std::integral_constant<bool, INDEXED_BIT_TYPE>{});
+        }
+
     private:
         const eliasfano_sparse_bitmap *parent_;
 
@@ -3339,6 +3349,19 @@ private:
         _YAEF_ATTR_NODISCARD size_type rank_one_impl(size_type index, std::false_type) const noexcept {
             return parent_->size() - parent_->pos_list_.lower_bound(index).to_index();
         }
+
+        _YAEF_ATTR_NODISCARD size_type rank_one_impl(size_type index, bool *bit_out, std::true_type) const noexcept {
+            auto iter = parent_->pos_list_.lower_bound(index);
+            *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
+            return iter.to_index();
+        }
+
+        _YAEF_ATTR_NODISCARD size_type rank_one_impl(size_type index, bool *bit_out, std::false_type) const noexcept {
+            auto iter = parent_->pos_list_.lower_bound(index);
+            *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
+            return parent_->size() - iter.to_index();
+        }
+
     };
 };
 
@@ -3352,7 +3375,7 @@ inline bool operator==(const eliasfano_sparse_bitmap<IndexedBitType, AllocT> &lh
 template<bool IndexedBitType, typename AllocT>
 inline bool operator!=(const eliasfano_sparse_bitmap<IndexedBitType, AllocT> &lhs,
                        const eliasfano_sparse_bitmap<IndexedBitType, AllocT> &rhs) {
-    return !(lhs == rhs);
+    return lhs.pos_list_ != rhs.pos_list_;
 }
 #endif
 
@@ -3452,6 +3475,14 @@ public:
         get_view().swap(other.get_view());
     }
 
+    template<typename AllocU, typename AllocV>
+    friend bool operator==(const bit_buffer<AllocU> &lhs, const bit_buffer<AllocV> &rhs);
+
+#if __cplusplus < 202002L
+    template<typename AllocU, typename AllocV>
+    friend bool operator!=(const bit_buffer<AllocU> &lhs, const bit_buffer<AllocV> &rhs);
+#endif
+
 private:
     inner_type inner_;
 
@@ -3472,26 +3503,16 @@ private:
 template<typename AllocT, typename AllocU>
 _YAEF_ATTR_NODISCARD inline bool operator==(const bit_buffer<AllocT> &lhs, 
                                             const bit_buffer<AllocU> &rhs) {
-    if (_YAEF_UNLIKELY(reinterpret_cast<uintptr_t>(std::addressof(lhs)) ==
-                       reinterpret_cast<uintptr_t>(std::addressof(rhs)))) {
-        return true;
-    }
-
-    if (lhs.size() != rhs.size()) {
-        return false;
-    }
-    
-    const auto *lhs_blocks = lhs.block_data();
-    const auto *rhs_blocks = rhs.block_data();
-    auto num_blocks = lhs.num_blocks();
-    return memcmp(lhs_blocks, rhs_blocks, num_blocks * sizeof(bit_buffer<AllocT>::block_type)) == 0;
+    return lhs.inner_ == rhs.inner_;
 }
 
+#if __cplusplus < 202002L
 template<typename AllocT, typename AllocU>
 _YAEF_ATTR_NODISCARD inline bool operator!=(const bit_buffer<AllocT> &lhs, 
                                             const bit_buffer<AllocU> &rhs) {
-    return !(lhs == rhs);
+    return lhs.inner_ != rhs.inner_;
 }
+#endif
 
 template<typename AllocT = details::aligned_allocator<uint8_t>>
 class packed_int_buffer {
@@ -3603,6 +3624,14 @@ public:
         get_view().swap(other.get_view());
     }
 
+    template<typename AllocU, typename AllocV>
+    friend bool operator==(const packed_int_buffer<AllocU> &lhs, const packed_int_buffer<AllocV> &rhs);
+
+#if __cplusplus < 202002L
+    template<typename AllocU, typename AllocV>
+    friend bool operator!=(const packed_int_buffer<AllocU> &lhs, const packed_int_buffer<AllocV> &rhs);
+#endif
+
 private:
     inner_type inner_;
 
@@ -3623,26 +3652,16 @@ private:
 template<typename AllocT, typename AllocU>
 _YAEF_ATTR_NODISCARD inline bool operator==(const packed_int_buffer<AllocT> &lhs, 
                                             const packed_int_buffer<AllocU> &rhs) {
-    if (_YAEF_UNLIKELY(reinterpret_cast<uintptr_t>(std::addressof(lhs)) ==
-                       reinterpret_cast<uintptr_t>(std::addressof(rhs)))) {
-        return true;
-    }
-
-    if (lhs.size() != rhs.size() || lhs.width() != rhs.width()) {
-        return false;
-    }
-    
-    const auto *lhs_blocks = lhs.block_data();
-    const auto *rhs_blocks = rhs.block_data();
-    auto num_blocks = lhs.num_blocks();
-    return memcmp(lhs_blocks, rhs_blocks, num_blocks * sizeof(bit_buffer<AllocT>::block_type)) == 0;
+    return lhs.inner_ == rhs.inner_;
 }
 
+#if __cplusplus < 202002L
 template<typename AllocT, typename AllocU>
 _YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_buffer<AllocT> &lhs, 
                                             const packed_int_buffer<AllocU> &rhs) {
-    return !(lhs == rhs);
+    return lhs.inner_ != rhs.inner_;
 }
+#endif
 
 template<typename T>
 inline error_code serialize_to_buf(const T &x, uint8_t *buf, size_t buf_size) {
