@@ -24,7 +24,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -142,8 +141,12 @@
 #   define _YAEF_TRAIT_VAR(_trait, ...) _trait ## _v <__VA_ARGS__>
 #endif
 
-//#define _YAEF_ASSERT(_expr) assert(_expr)
-#define _YAEF_ASSERT(_expr) do { if (!(_expr)) { __builtin_trap(); } } while (false)
+#ifdef NDEBUG
+#   define _YAEF_ASSERT(_expr)
+#else
+#   define _YAEF_ASSERT(_expr) do { if (!(_expr)) { \
+    ::yaef::details::raise_assertion(__FILE__, __LINE__, #_expr); __builtin_trap(); } } while (false)
+#endif
 
 #ifdef __BMI2__
 #   define _YAEF_INTRINSICS_HAVE_BMI2 1
@@ -210,6 +213,10 @@ enum class error_code : uint32_t {
 #endif
 
 namespace details {
+
+inline void raise_assertion(const char *filename, int line, const char *expr) {
+    fprintf(stderr, "[%s:%d] assertion `%s` failed.", filename, line, expr);
+}
 
 #if !_YAEF_USE_CXX_CONCEPTS
 template<typename T>
@@ -724,13 +731,26 @@ public:
         return bits64::idiv_ceil(num_elems_ * width_, BLOCK_WIDTH); 
     }
 
+    _YAEF_ATTR_NODISCARD value_type limit_min() const { return 0; }
+    
+    _YAEF_ATTR_NODISCARD value_type limit_max() const {
+        if (_YAEF_UNLIKELY(width() == sizeof(value_type) * CHAR_BIT)) { 
+            return std::numeric_limits<value_type>::max(); 
+        }
+        return (static_cast<value_type>(1) << width()) - 1;
+    }
+
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
         return sizeof(block_type) * num_blocks();
     }
 
     void fill(value_type value) {
-        if (_YAEF_UNLIKELY(value == 0)) {
+        if (_YAEF_UNLIKELY(value == limit_min())) {
             clear_all_bits();
+            return;
+        }
+        if (_YAEF_UNLIKELY(value == limit_max())) {
+            set_all_bits();
             return;
         }
         for (size_type i = 0; i < size(); ++i)
@@ -825,6 +845,7 @@ private:
         const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
         return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
     }
+
     _YAEF_ATTR_NODISCARD std::pair<block_type *, uint32_t> locate_block(size_type bit_index) noexcept {
         const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
         return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
@@ -2523,6 +2544,10 @@ private:
     _YAEF_ATTR_NODISCARD const_iterator search_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
         constexpr size_type LINEAR_SEARCH_THRESHOLD = 32;
 
+        if (_YAEF_UNLIKELY(!cmp(min_, target))) {
+            return make_iter(0, 0);
+        }
+
         const size_type num_zeros = high_bits_.size() - size();
         const unsigned_value_type t = to_stored_value(target);
         const unsigned_value_type h = split_high_bits(t);
@@ -3331,6 +3356,294 @@ inline bool operator!=(const eliasfano_sparse_bitmap<IndexedBitType, AllocT> &lh
 }
 #endif
 
+template<typename AllocT = details::aligned_allocator<uint8_t>>
+class bit_buffer {
+    using view_type       = details::bits64::bit_view;
+    using inner_type      = details::value_with_allocator_pair<view_type, AllocT>;
+
+    friend struct details::serialize_friend_access;
+public:
+    using size_type       = typename view_type::size_type;
+    using difference_type = ptrdiff_t;
+    using value_type      = bool;
+    using block_type      = typename view_type::block_type;
+    using allocator_type  = AllocT;
+    static constexpr size_type BLOCK_WIDTH = view_type::BLOCK_WIDTH; 
+
+public:
+    bit_buffer() = default;
+
+    bit_buffer(const bit_buffer &other) {
+        get_view() = details::duplicate_bits(get_alloc(), other.get_view());
+    }
+
+    bit_buffer(bit_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+    }
+
+    bit_buffer(size_type size) {
+        get_view() = details::allocate_bits(get_alloc(), size);
+    }
+
+    ~bit_buffer() {
+        details::deallocate_bits(get_alloc(), get_view());
+    }
+
+    bit_buffer &operator=(const bit_buffer &other) {
+        get_view() = details::duplicate_bits(get_alloc(), other.get_view());
+        return *this;
+    }
+
+    bit_buffer &operator=(bit_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+        return *this;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept { return get_view().space_usage_in_bytes(); }
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return get_view().size(); }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+    _YAEF_ATTR_NODISCARD const block_type *block_data() const noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD block_type *block_data() noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { return get_view().num_blocks(); }
+
+    _YAEF_ATTR_NODISCARD value_type get_bit(size_type index) const { 
+        return get_view().get_bit(index); 
+    }
+
+    void set_bit(size_type index, value_type value) { 
+        get_view().set_bit(index, value); 
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const { 
+        return get_view().get_bit(index); 
+    }
+
+    void set_all_bits() {
+        get_view().set_all_bits();
+    }
+
+    void clear_all_bits() {
+        get_view().clear_all_bits();
+    }
+
+    void reset() {
+        details::deallocate_bits(get_alloc(), get_view());
+        get_view() = view_type{};
+    }
+
+    void resize(size_t new_size) {
+        if (_YAEF_UNLIKELY(new_size == size())) { return; }
+        if (_YAEF_UNLIKELY(new_size == 0)) {
+            reset();
+            return;
+        }
+
+        auto new_vec = details::allocate_bits(get_alloc(), new_size);
+        for (size_t i = 0; i < size(); ++i) {
+            new_vec.set_bit(i, get_bit(i));
+        }
+        details::deallocate_bits(get_alloc(), get_view());
+        get_view() = new_vec;
+    }
+
+    void swap(bit_buffer &other) noexcept {
+        get_view().swap(other.get_view());
+    }
+
+private:
+    inner_type inner_;
+
+    _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD allocator_type &get_alloc() { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD const view_type &get_view() const { return inner_.value(); }
+    _YAEF_ATTR_NODISCARD view_type &get_view() { return inner_.value(); }
+
+    error_code do_serialize(details::serializer &ser) const {
+        return get_view().serialize(ser);
+    }
+
+    error_code do_deserialize(details::deserializer &deser) {
+        return get_view().deserialize(get_alloc(), deser);        
+    }
+};
+
+template<typename AllocT, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator==(const bit_buffer<AllocT> &lhs, 
+                                            const bit_buffer<AllocU> &rhs) {
+    if (_YAEF_UNLIKELY(reinterpret_cast<uintptr_t>(std::addressof(lhs)) ==
+                       reinterpret_cast<uintptr_t>(std::addressof(rhs)))) {
+        return true;
+    }
+
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    
+    const auto *lhs_blocks = lhs.block_data();
+    const auto *rhs_blocks = rhs.block_data();
+    auto num_blocks = lhs.num_blocks();
+    return memcmp(lhs_blocks, rhs_blocks, num_blocks * sizeof(bit_buffer<AllocT>::block_type)) == 0;
+}
+
+template<typename AllocT, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator!=(const bit_buffer<AllocT> &lhs, 
+                                            const bit_buffer<AllocU> &rhs) {
+    return !(lhs == rhs);
+}
+
+template<typename AllocT = details::aligned_allocator<uint8_t>>
+class packed_int_buffer {
+public:
+    using view_type       = details::bits64::packed_int_view;
+    using inner_type      = details::value_with_allocator_pair<view_type, AllocT>;
+
+    friend struct details::serialize_friend_access;
+public:
+    using size_type       = typename view_type::size_type;
+    using difference_type = ptrdiff_t;
+    using value_type      = uint64_t;
+    using block_type      = typename view_type::block_type;
+    using allocator_type  = AllocT;
+    static constexpr size_type BLOCK_WIDTH = view_type::BLOCK_WIDTH; 
+
+public:
+    packed_int_buffer() = default;
+
+    packed_int_buffer(const packed_int_buffer &other) {
+        get_view() = details::duplicate_packed_ints(get_alloc(), other.get_view());
+    }
+
+    packed_int_buffer(packed_int_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+    }
+
+    packed_int_buffer(uint32_t width, size_type size) {
+        if (width >= 64) {
+            _YAEF_THROW(std::runtime_error{"The width of packed_int_buffer should be between 0 and 64."});
+        }
+        get_view() = details::allocate_packed_ints(get_alloc(), width, size);
+    }
+
+    ~packed_int_buffer() {
+        details::deallocate_packed_ints(get_alloc(), get_view());
+    }
+
+    packed_int_buffer &operator=(const packed_int_buffer &other) {
+        get_view() = details::duplicate_packed_ints(get_alloc(), other.get_view());
+        return *this;
+    }
+
+    packed_int_buffer &operator=(packed_int_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+        return *this;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept { return get_view().space_usage_in_bytes(); }
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return get_view().size(); }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+    _YAEF_ATTR_NODISCARD uint32_t width() const noexcept { return get_view().width(); }
+    _YAEF_ATTR_NODISCARD value_type limit_min() const { return get_view().limit_min(); }
+    _YAEF_ATTR_NODISCARD value_type limit_max() const { return get_view().limit_max(); }
+
+    _YAEF_ATTR_NODISCARD const block_type *block_data() const noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD block_type *block_data() noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { return get_view().num_blocks(); }
+
+    _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept { 
+        return get_view().get_value(index); 
+    }
+
+    void set_value(size_type index, value_type value) noexcept { 
+        get_view().set_value(index, value); 
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {
+        return get_view().get_value(index);
+    }
+
+    void fill_min_values() {
+        get_view().clear_all_bits();
+    }
+    
+    void fill_max_values() {
+        get_view().set_all_bits();
+    }
+
+    void fill(value_type val) {
+        get_view().fill(val);
+    }
+
+    void reset() {
+        details::deallocate_packed_ints(get_alloc(), get_view());
+        get_view() = view_type{};
+    }
+
+    void resize(size_t new_size) {
+        _YAEF_ASSERT(width() != 0);
+
+        if (_YAEF_UNLIKELY(new_size == size())) { return; }
+        if (_YAEF_UNLIKELY(new_size == 0)) { 
+            reset(); 
+            return;
+        }
+
+        auto new_vec = details::allocate_packed_ints(get_alloc(), width(), new_size);
+        for (size_t i = 0; i < size(); ++i) {
+            new_vec.set_value(i, get_value(i));
+        }
+        details::deallocate_packed_ints(get_alloc(), get_view());
+        get_view() = new_vec;
+    }
+
+    void swap(packed_int_buffer &other) noexcept {
+        get_view().swap(other.get_view());
+    }
+
+private:
+    inner_type inner_;
+
+    _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD allocator_type &get_alloc() { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD const view_type &get_view() const { return inner_.value(); }
+    _YAEF_ATTR_NODISCARD view_type &get_view() { return inner_.value(); }
+
+    error_code do_serialize(details::serializer &ser) const {
+        return get_view().serialize(ser);
+    }
+
+    error_code do_deserialize(details::deserializer &deser) {
+        return get_view().deserialize(get_alloc(), deser);        
+    }
+};
+
+template<typename AllocT, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator==(const packed_int_buffer<AllocT> &lhs, 
+                                            const packed_int_buffer<AllocU> &rhs) {
+    if (_YAEF_UNLIKELY(reinterpret_cast<uintptr_t>(std::addressof(lhs)) ==
+                       reinterpret_cast<uintptr_t>(std::addressof(rhs)))) {
+        return true;
+    }
+
+    if (lhs.size() != rhs.size() || lhs.width() != rhs.width()) {
+        return false;
+    }
+    
+    const auto *lhs_blocks = lhs.block_data();
+    const auto *rhs_blocks = rhs.block_data();
+    auto num_blocks = lhs.num_blocks();
+    return memcmp(lhs_blocks, rhs_blocks, num_blocks * sizeof(bit_buffer<AllocT>::block_type)) == 0;
+}
+
+template<typename AllocT, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_buffer<AllocT> &lhs, 
+                                            const packed_int_buffer<AllocU> &rhs) {
+    return !(lhs == rhs);
+}
+
 template<typename T>
 inline error_code serialize_to_buf(const T &x, uint8_t *buf, size_t buf_size) {
     auto ser = details::serializer{details::make_unique_obj<details::membuf_writer_context>(buf, buf_size)};
@@ -3344,11 +3657,24 @@ inline error_code serialize_to_file(const T &x, FILE *file) {
 }
 
 template<typename T>
-inline error_code serialize_to_file(const T &x, const char *path) {
-    FILE *file = fopen(path, "wb");
+inline error_code serialize_to_file(const T &x, const char *path, bool overwrite) {
+    FILE *file = nullptr;
+    if (overwrite) {
+        file = fopen(path, "wb");
+    } else {
+        file = fopen(path, "ab");
+    }
+    if (file == nullptr) {
+        return error_code::serialize_io;
+    }
     error_code ec = serialize_to_file(x, file);
     fclose(file);
     return ec;
+}
+
+template<typename T>
+inline error_code serialize_to_file(const T &x, const std::string &path, bool overwrite) {
+    return serialize_to_file(x, path.c_str(), overwrite);
 }
 
 template<typename T>
@@ -3372,6 +3698,9 @@ inline error_code deserialize_from_file(T &x, FILE *file) {
 template<typename T>
 inline error_code deserialize_from_file(T &x, const char *path) {
     FILE *file = fopen(path, "rb");
+    if (file == nullptr) {
+        return error_code::deserialize_io;
+    }
     error_code ec = deserialize_from_file(x, file);
     fclose(file);
     return ec;

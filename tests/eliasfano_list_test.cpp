@@ -17,6 +17,8 @@ _YAEF_STATIC_ASSERT_NOMSG(std::is_move_assignable<yaef::eliasfano_list<uint32_t>
 
 TEST_CASE("eliasfano_list_test", "[public]") {
     SECTION("construct from sorted unsigned integer list and random access") {
+        _YAEF_ASSERT(false);
+
         using int_type = uint32_t;
         yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
                                                          std::numeric_limits<int_type>::max(),
@@ -190,7 +192,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
 
-        REQUIRE(yaef::serialize_to_file(list, "tmp.yaef") == yaef::error_code::success);
+        REQUIRE(yaef::serialize_to_file(list, "tmp.yaef", true) == yaef::error_code::success);
         {
             yaef::eliasfano_list<int_type> deserialized_list;
             REQUIRE(yaef::deserialize_from_file(deserialized_list, "tmp.yaef") == yaef::error_code::success);

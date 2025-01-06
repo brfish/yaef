@@ -59,7 +59,7 @@ TEST_CASE("eliasfano_sequence", "[public]") {
 
         yaef::eliasfano_sequence<int_type> seq{yaef::from_sorted, ints.begin(), ints.end()};
         
-        REQUIRE(yaef::serialize_to_file(seq, "tmp_seq.yaef") == yaef::error_code::success);
+        REQUIRE(yaef::serialize_to_file(seq, "tmp_seq.yaef", true) == yaef::error_code::success);
         {
             yaef::eliasfano_sequence<int_type> deserialized_seq;
             REQUIRE(yaef::deserialize_from_file(deserialized_seq, "tmp_seq.yaef") == yaef::error_code::success);

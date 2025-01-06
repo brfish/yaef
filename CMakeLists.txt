@@ -10,7 +10,7 @@ set(YAEF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 option(YAEF_OPTS_ENABLE_TESTS "enable unit tests" OFF)
 option(YAEF_OPTS_ENABLE_BENCHMARKS "enable benchmarks" OFF)
 
-set(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT "(DEV-only) output the intemediate assembly code" OFF)
+option(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT "(DEV-only) output the intemediate assembly code" OFF)
 
 add_library(yaef INTERFACE)
 add_library(yaef::yaef ALIAS yaef)
