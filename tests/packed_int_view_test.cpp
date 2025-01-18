@@ -10,9 +10,9 @@ TEST_CASE("packed_int_view_test", "[private]") {
 
     SECTION("allocate and deallocate") {
         constexpr size_t NUM_INTS = 10000;
-        constexpr uint32_t INT_WIDTH = 23;
+        constexpr uint32_t VAL_WIDTH = 23;
 
-        auto ints = yaef::details::allocate_packed_ints(alloc, INT_WIDTH, NUM_INTS);
+        auto ints = yaef::details::allocate_packed_ints(alloc, VAL_WIDTH, NUM_INTS);
         REQUIRE(ints.size() == NUM_INTS);
         REQUIRE_NOTHROW(yaef::details::deallocate_packed_ints(alloc, ints));
     }
@@ -84,9 +84,9 @@ TEST_CASE("packed_int_view_test", "[private]") {
         using block_type = packed_int_view::block_type;
         constexpr uint32_t BLOCK_WIDTH = packed_int_view::BLOCK_WIDTH;
         constexpr size_t NUM_INTS = 10000;
-        constexpr uint32_t INT_WIDTH = 13;
+        constexpr uint32_t VAL_WIDTH = 13;
 
-        auto ints = yaef::details::allocate_uninit_packed_ints(alloc, INT_WIDTH, NUM_INTS);
+        auto ints = yaef::details::allocate_uninit_packed_ints(alloc, VAL_WIDTH, NUM_INTS);
         YAEF_DEFER { yaef::details::deallocate_packed_ints(alloc, ints); }; 
 
         const size_t num_blocks = ints.num_blocks();
@@ -99,7 +99,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         ints.set_all_bits();
         for (size_t i = 0; i < num_blocks - 1; ++i)
             REQUIRE(blocks[i] == std::numeric_limits<block_type>::max());
-        const size_t num_residual_bits = NUM_INTS * INT_WIDTH - (num_blocks - 1) * BLOCK_WIDTH;
+        const size_t num_residual_bits = NUM_INTS * VAL_WIDTH - (num_blocks - 1) * BLOCK_WIDTH;
         REQUIRE(blocks[num_blocks - 1] == yaef::details::bits64::make_mask_lsb1(num_residual_bits));
     }
 }

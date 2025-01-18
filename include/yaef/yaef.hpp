@@ -24,6 +24,7 @@
 #pragma once
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -1212,8 +1213,17 @@ public:
         }
 #if __cplusplus >= 201703L
         return static_cast<T *>(::operator new[](sizeof(T) * n, std::align_val_t{Alignment}));
-#else
+#elif (defined(_WIN32) || defined(_WIN64)) && defined(_MSC_VER)
         return static_cast<T *>(::_aligned_malloc(sizeof(T) * n, Alignment));
+#elif _POSIX_C_SOURCE >= 200112L
+        void *ptr = nullptr;
+        int ret = ::posix_memalign(&ptr, Alignment, sizeof(T) * n);
+        if (_YAEF_UNLIKELY(ret != 0)) {
+            throw std::bad_alloc{};
+        }
+        return static_cast<T *>(ptr);
+#else
+#   error "cannot find a suitable aligned allocate implementation"
 #endif
     }
 
@@ -1224,8 +1234,12 @@ public:
         }
 #if __cplusplus >= 201703L
         ::operator delete[](static_cast<void *>(p), std::align_val_t{Alignment});
-#else
+#elif (defined(_WIN32) || defined(_WIN64)) && defined(_MSC_VER)
         ::_aligned_free(static_cast<void *>(p));
+#elif _POSIX_C_SOURCE >= 200112L
+        ::free(p);
+#else
+#   error "cannot find a suitable aligned allocate implementation"
 #endif
     }
 };
