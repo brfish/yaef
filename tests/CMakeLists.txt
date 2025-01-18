@@ -1,7 +1,7 @@
 macro(yaef_add_test _name _srcfile)
   add_executable(${_name} "${_srcfile}" ${ARGN})
   target_link_libraries(${_name} PRIVATE yaef::yaef Catch2::Catch2WithMain)
-  set_property(TARGET ${_name} PROPERTY CXX_STANDARD 11)
+  set_property(TARGET ${_name} PROPERTY CXX_STANDARD 20)
 endmacro()
 
 # bit_view_test

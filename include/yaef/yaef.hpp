@@ -2215,13 +2215,14 @@ public:
 
     eliasfano_list(const allocator_type &alloc)
         : low_bits_with_alloc_(details::bits64::packed_int_view{}, alloc), 
-          min_(0) { }
+          min_(0), max_(0) { }
 
     eliasfano_list(const eliasfano_list &other)
         : eliasfano_list(alloc_traits::select_on_container_copy_construction(other.get_alloc())) {
         high_bits_ = other.high_bits_.duplicate(get_alloc());
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         min_ = other.min_;
+        max_ = other.max_;
     }
 
     eliasfano_list(eliasfano_list &&other) noexcept {
@@ -2229,6 +2230,7 @@ public:
         get_low_bits() = details::exchange(other.get_low_bits(), low_bits_type{});
         swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
         min_ = other.min_;
+        max_ = other.max_;
     }
 
     eliasfano_list(const eliasfano_list &other, const allocator_type &alloc)
@@ -2236,6 +2238,7 @@ public:
         high_bits_ = other.high_bits_.duplicate(get_alloc());
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         min_ = other.min_;
+        max_ = other.max_;
     }
 
     eliasfano_list(eliasfano_list &&other, const allocator_type &alloc)
@@ -2248,6 +2251,7 @@ public:
             get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         }
         min_ = other.min_;
+        max_ = other.max_;
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
@@ -2296,6 +2300,7 @@ public:
         high_bits_ = other.high_bits_.duplicate(get_alloc());
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.get_low_bits());
         min_ = other.min_;
+        max_ = other.max_;
         return *this;
     }
 
@@ -2308,6 +2313,7 @@ public:
         get_low_bits() = other.get_low_bits(); 
         other.get_low_bits() = low_bits_type{};
         min_ = other.min_;
+        max_ = other.max_;
         return *this;
     }
 
@@ -2336,7 +2342,7 @@ public:
     _YAEF_ATTR_NODISCARD const_iterator iter(size_type index) const _YAEF_MAYBE_NOEXCEPT {
         _YAEF_ASSERT(index < size());
         if (_YAEF_UNLIKELY(index >= size())) {
-            _YAEF_THROW(std::out_of_range{"index is out of range"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::iter: index is out of range"});
         }
         return make_iter(high_bits_.select_one(index), index);
     }
@@ -2344,7 +2350,7 @@ public:
     _YAEF_ATTR_NODISCARD value_type front() const _YAEF_MAYBE_NOEXCEPT {
         _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
-            _YAEF_THROW(std::out_of_range{"the list is empty"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::front: the list is empty"});
         }
         return min_;
     }
@@ -2352,15 +2358,15 @@ public:
     _YAEF_ATTR_NODISCARD value_type back() const _YAEF_MAYBE_NOEXCEPT {
         _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
-            _YAEF_THROW(std::out_of_range{"the list is empty"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::back: the list is empty"});
         }
-        return at(size() - 1);
+        return max_;
     }
 
     _YAEF_ATTR_NODISCARD value_type min() const _YAEF_MAYBE_NOEXCEPT { 
         _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
-            _YAEF_THROW(std::out_of_range{"the list is empty"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::min: the list is empty"});
         }
         return min_; 
     }
@@ -2368,15 +2374,15 @@ public:
     _YAEF_ATTR_NODISCARD value_type max() const _YAEF_MAYBE_NOEXCEPT { 
         _YAEF_ASSERT(!empty());
         if (_YAEF_UNLIKELY(empty())) {
-            _YAEF_THROW(std::out_of_range{"the list is empty"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::max: the list is empty"});
         }
-        return back(); 
+        return max_;
     }
 
     _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
         _YAEF_ASSERT(index < size());
         if (_YAEF_UNLIKELY(index >= size())) {
-            _YAEF_THROW(std::out_of_range{"index is out of range"});
+            _YAEF_THROW(std::out_of_range{"eliasfano_list::at: index is out of range"});
         }
         unsigned_value_type h = high_bits_.select_one(index) - index - 1;
         unsigned_value_type l = get_low_bits().get_value(index);
@@ -2416,6 +2422,7 @@ public:
         get_low_bits().swap(other.get_low_bits());
         swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
         std::swap(min_, other.min_);
+        std::swap(max_, other.max_);
     }
 
     template<typename U, typename AllocU>
@@ -2433,6 +2440,7 @@ protected:
         _YAEF_RETURN_ERR_IF_FAIL(high_bits_.serialize(ser));
         _YAEF_RETURN_ERR_IF_FAIL(get_low_bits().serialize(ser));
         if (!ser.write(min_)) { return error_code::serialize_io; }
+        if (!ser.write(max_)) { return error_code::serialize_io; }
         return error_code::success;
     }
 
@@ -2440,6 +2448,7 @@ protected:
         _YAEF_RETURN_ERR_IF_FAIL(high_bits_.deserialize(get_alloc(), deser));
         _YAEF_RETURN_ERR_IF_FAIL(get_low_bits().deserialize(get_alloc(), deser));
         if (!deser.read(min_)) { return error_code::deserialize_io; }
+        if (!deser.read(max_)) { return error_code::deserialize_io; }
         return error_code::success;
     }
 
@@ -2448,6 +2457,7 @@ private:
     high_bits_type           high_bits_;
     low_bits_with_alloc_type low_bits_with_alloc_;
     value_type               min_;
+    value_type               max_;
 
     struct sorted_seq_info {
         bool       valid;
@@ -2488,6 +2498,7 @@ private:
                                        sorted_seq_info sorted_info, uint32_t low_width) {
         _YAEF_ASSERT(low_width > 0);
         min_ = sorted_info.min;
+        max_ = sorted_info.max;
 
         using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT>;
         encoder_type encoder{first, last, sorted_info.min, sorted_info.max, low_width};
@@ -2558,8 +2569,11 @@ private:
     _YAEF_ATTR_NODISCARD const_iterator search_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
         constexpr size_type LINEAR_SEARCH_THRESHOLD = 32;
 
-        if (_YAEF_UNLIKELY(!cmp(min_, target))) {
-            return make_iter(0, 0);
+        if (_YAEF_UNLIKELY(!cmp(min(), target))) {
+            return begin();
+        }
+        if (_YAEF_UNLIKELY(cmp(max(), target))) {
+            return end();
         }
 
         const size_type num_zeros = high_bits_.size() - size();
