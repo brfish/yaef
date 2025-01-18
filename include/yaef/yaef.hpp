@@ -1875,7 +1875,7 @@ private:
                 }
                 subsample_index = subsample_index * (UNIFORM_SUBSAMPLE_BLOCK_NUM_ELEMS - 1) + mini_block_index - 1;
                 subsample_rank_distance = mini_block_offset;
-            } else {
+            } else /*if (type == subsampler_type::each_one)*/ {
                 subsample_index = subsample_index * (EACH_ONE_SUBSAMPLE_BLOCK_NUM_ELEMS - 1) + block_offset - 1;
             }
             return sample_find_result{subsample_rank_distance, subsamples.get_value(subsample_index)};
@@ -3104,6 +3104,7 @@ public:
     using size_type       = size_t;
     using difference_type = ptrdiff_t;
     using allocator_type  = AllocT;
+    using base_list_type  = eliasfano_list<size_type, allocator_type>;
     static constexpr bool INDEXED_BIT_TYPE = IndexedBitType;
 
 public:
@@ -3243,6 +3244,8 @@ public:
         return *this;
     }
 
+    _YAEF_ATTR_NODISCARD const base_list_type &base_list() const noexcept { return pos_list_; }
+
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_bits_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
 
@@ -3289,6 +3292,12 @@ public:
         _YAEF_ASSERT(rank < pos_list_.size());
         return pos_list_.at(rank);
     }
+    
+    _YAEF_ATTR_NODISCARD typename base_list_type::iterator 
+    select_iter(size_type rank) const _YAEF_MAYBE_NOEXCEPT {
+        _YAEF_ASSERT(rank < pos_list_.size());
+        return pos_list_.iter(rank);
+    }
 
     _YAEF_ATTR_NODISCARD size_type find_first() const noexcept {
         return pos_list_.front();
@@ -3327,8 +3336,8 @@ protected:
     }
 
 private:
-    eliasfano_list<size_type, allocator_type> pos_list_;
-    size_type                                 num_bits_;
+    base_list_type pos_list_;
+    size_type      num_bits_;
 
     class index_related_impl {
     public:
