@@ -216,7 +216,7 @@ enum class error_code : uint32_t {
 namespace details {
 
 inline void raise_assertion(const char *filename, int line, const char *expr) {
-    fprintf(stderr, "[%s:%d] assertion `%s` failed.", filename, line, expr);
+    ::fprintf(stderr, "[%s:%d] assertion `%s` failed.", filename, line, expr);
 }
 
 #if !_YAEF_USE_CXX_CONCEPTS
@@ -250,13 +250,6 @@ _YAEF_ATTR_NODISCARD inline std::unique_ptr<T []> make_unique_array(size_t num) 
 #endif
 }
 
-class stream_context {
-public:
-    virtual ~stream_context();
-    virtual size_t read_bytes(uint8_t *buf, size_t size) = 0;
-    virtual size_t write_bytes(const uint8_t *buf, size_t size) = 0;
-};
-
 class reader_context {
 public:
     virtual ~reader_context() = default;
@@ -275,7 +268,7 @@ public:
         : file_(file) { }
 
     size_t read(uint8_t *buf, size_t size) override {
-        return fread(buf, 1, size, file_);
+        return ::fread(buf, 1, size, file_);
     }
 
 private:
@@ -288,7 +281,7 @@ public:
         : file_(file) { }
 
     size_t write(const uint8_t *buf, size_t size) override {
-        return fwrite(buf, 1, size, file_);
+        return ::fwrite(buf, 1, size, file_);
     }
 
 private:
@@ -337,7 +330,7 @@ public:
         if (actual_size == 0) {
             return 0;
         }
-        memcpy(buf, buf_ + cur_, actual_size);
+        ::memcpy(buf, buf_ + cur_, actual_size);
         cur_ += actual_size;
         return actual_size;
     }
@@ -358,7 +351,7 @@ public:
         if (actual_size == 0) {
             return 0;
         }
-        memcpy(buf_ + cur_, buf, actual_size);
+        ::memcpy(buf_ + cur_, buf, actual_size);
         cur_ += actual_size;
         return actual_size;
     }
@@ -1082,19 +1075,19 @@ private:
 
 public:
     bitset_foreach_cursor() noexcept
-        : blocks_cur_(nullptr), blocks_end_(nullptr), cur_block_(0), 
+        : blocks_beg_(nullptr), blocks_end_(nullptr), cur_block_(0), 
           skipped_blocks_(0), cached_(0) { }
 
     bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks) noexcept
-        : blocks_cur_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
+        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
-        move_to_first_non_empty_block();
+        move_to_next_non_empty_block();
         update_cache();
     }
 
     bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks, size_type num_skipped_bits) noexcept
-        : blocks_cur_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
+        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
         _YAEF_ASSERT(idiv_ceil(num_skipped_bits, BLOCK_WIDTH) <= num_blocks);
@@ -1102,14 +1095,12 @@ public:
         const size_type num_full_blocks = num_skipped_bits / BLOCK_WIDTH,
                         num_residual_bits = num_skipped_bits % BLOCK_WIDTH;
         
-        blocks_cur_ += num_full_blocks;
         skipped_blocks_ += num_full_blocks;
 
-        cur_block_ = block_handler{}(*blocks_cur_) & (~bits64::make_mask_lsb1(num_residual_bits));
+        cur_block_ = block_handler{}(*get_cur_block_ptr()) & (~bits64::make_mask_lsb1(num_residual_bits));
         if (cur_block_ == 0) {
-            ++blocks_cur_;
             ++skipped_blocks_;
-            move_to_first_non_empty_block();
+            move_to_next_non_empty_block();
         }
         update_cache();
     }
@@ -1125,30 +1116,32 @@ public:
         return skipped_blocks_ * BLOCK_WIDTH + cached_;
     }
 
-    _YAEF_ATTR_NODISCARD bool is_valid() const noexcept { return blocks_cur_ != blocks_end_; }
+    _YAEF_ATTR_NODISCARD bool is_valid() const noexcept { return get_cur_block_ptr() != blocks_end_; }
 
     void next() {
         if (_YAEF_UNLIKELY(cur_block_ == 0)) {
-            ++blocks_cur_;
             ++skipped_blocks_;
-            move_to_first_non_empty_block();
+            move_to_next_non_empty_block();
         }
         update_cache();
     }
 
 private:
-    const block_type *blocks_cur_;
+    const block_type *blocks_beg_;
     const block_type *blocks_end_;
     block_type        cur_block_;
     uint64_t          skipped_blocks_;
     uint32_t          cached_;
 
-    void move_to_first_non_empty_block() {
-        while (blocks_cur_ != blocks_end_ && block_handler{}(*blocks_cur_) == 0) {
-            ++blocks_cur_;
+    _YAEF_ATTR_NODISCARD const block_type *get_cur_block_ptr() const {
+        return blocks_beg_ + skipped_blocks_;
+    }
+
+    void move_to_next_non_empty_block() {
+        while (get_cur_block_ptr() != blocks_end_ && block_handler{}(*get_cur_block_ptr()) == 0) {
             ++skipped_blocks_;
         }
-        cur_block_ = block_handler{}(*blocks_cur_);
+        cur_block_ = block_handler{}(*get_cur_block_ptr());
     }
 
     void update_cache() {
@@ -1188,6 +1181,7 @@ _YAEF_ATTR_FORCEINLINE void prefetch_read(void *p) noexcept {
 
 template<typename T, size_t Alignment = alignof(T)>
 class aligned_allocator {
+    static_assert((Alignment & (Alignment - 1)) == 0, "the alignment must be the power of two");
 public:
     using value_type      = T;
     using size_type       = size_t;
@@ -1406,8 +1400,8 @@ inline error_code bit_view::deserialize(AllocT &alloc, deserializer &deser) {
 template<typename T, typename InputIterT>
 class eliasfano_encoder_scalar_impl {
 public:
-    using value_type    = T;
-    using size_type     = size_t;
+    using value_type = T;
+    using size_type  = size_t;
 
 public:
     eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, 
@@ -2265,7 +2259,7 @@ public:
         : eliasfano_list(alloc) {
         auto sorted_info = sorted_seq_info::create(first, last);
         if (!sorted_info.valid) {
-            _YAEF_THROW(std::invalid_argument{"the input data is not sorted"});
+            _YAEF_THROW(std::invalid_argument{"eliasfano_list::eliasfano_list: the input data is not sorted"});
         }
         const uint32_t low_width = details::bits64::bit_width(to_stored_value(sorted_info.max) / sorted_info.num);
         unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
@@ -2763,7 +2757,8 @@ public:
                        const allocator_type &alloc = allocator_type{})
         : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
         if (!std::is_sorted(first, last)) {
-            _YAEF_THROW(std::invalid_argument{"the input data is not sorted"});
+            _YAEF_THROW(std::invalid_argument{
+                "eliasfano_sequence::eliasfano_sequence: the input data is not sorted"});
         }
         unchecked_init(first, last);
     }
@@ -3172,7 +3167,8 @@ public:
         details::bits64::large_bitset_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
             if (indice_writer > num_indexed_bits) {
                 _YAEF_THROW(std::out_of_range{
-                    "The number of indexed bits exceeds the parameter `num_indexed_bits`."});
+                    "eliasfano_sparse_bitmap::eliasfano_sparse_bitmap: "
+                    "the number of indexed bits exceeds the parameter `num_indexed_bits`."});
             }
             indices[indice_writer++] = index;
         });
@@ -3579,8 +3575,9 @@ public:
     }
 
     packed_int_buffer(uint32_t width, size_type size) {
-        if (width >= 64) {
-            _YAEF_THROW(std::runtime_error{"The width of packed_int_buffer should be between 0 and 64."});
+        if (width > 64) {
+            _YAEF_THROW(std::runtime_error{
+                "packed_int_buffer::packed_int_buffer: the width of packed_int_buffer should be between 0 and 64."});
         }
         get_view() = details::allocate_packed_ints(get_alloc(), width, size);
     }
@@ -3716,15 +3713,15 @@ template<typename T>
 inline error_code serialize_to_file(const T &x, const char *path, bool overwrite) {
     FILE *file = nullptr;
     if (overwrite) {
-        file = fopen(path, "wb");
+        file = ::fopen(path, "wb");
     } else {
-        file = fopen(path, "ab");
+        file = ::fopen(path, "ab");
     }
     if (file == nullptr) {
         return error_code::serialize_io;
     }
     error_code ec = serialize_to_file(x, file);
-    fclose(file);
+    ::fclose(file);
     return ec;
 }
 
@@ -3753,12 +3750,12 @@ inline error_code deserialize_from_file(T &x, FILE *file) {
 
 template<typename T>
 inline error_code deserialize_from_file(T &x, const char *path) {
-    FILE *file = fopen(path, "rb");
+    FILE *file = ::fopen(path, "rb");
     if (file == nullptr) {
         return error_code::deserialize_io;
     }
     error_code ec = deserialize_from_file(x, file);
-    fclose(file);
+    ::fclose(file);
     return ec;
 }
 
