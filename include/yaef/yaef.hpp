@@ -460,7 +460,7 @@ struct serialize_friend_access {
 };
 
 template<typename T, typename U = T>
-inline T exchange(T &obj, U &&new_val) 
+_YAEF_ATTR_NODISCARD inline T exchange(T &obj, U &&new_val) 
     noexcept(std::is_nothrow_move_constructible<T>::value &&
              std::is_nothrow_assignable<T &, U>::value) {
 #if __cpp_lib_exchange_function >= 201304L
@@ -474,7 +474,7 @@ inline T exchange(T &obj, U &&new_val)
 
 namespace bits64 {
 
-// A bit-parallel implementation.
+// a bit-parallel implementation
 _YAEF_ATTR_NODISCARD inline uint32_t popcount_fallback(uint64_t block) noexcept {
     constexpr uint64_t MASK1 = 0x5555555555555555ULL;
     constexpr uint64_t MASK2 = 0x3333333333333333ULL;
@@ -500,7 +500,7 @@ _YAEF_ATTR_NODISCARD inline uint32_t popcount(uint64_t block) noexcept {
 #endif
 }
 
-// A simple implementation based on binary searching.
+// a simple implementation based on binary searching
 _YAEF_ATTR_NODISCARD inline uint32_t count_leading_zero_fallback(uint64_t block) noexcept {
     if (_YAEF_UNLIKELY(block == 0)) { return 64; }
     uint32_t result = 0;
@@ -539,7 +539,7 @@ _YAEF_ATTR_NODISCARD inline uint32_t count_leading_one(uint64_t block) noexcept 
     return count_leading_zero(~block);
 }
 
-// A simple implementation based on binary searching.
+// a simple implementation based on binary searching
 _YAEF_ATTR_NODISCARD inline uint32_t count_trailing_zero_fallback(uint64_t block) noexcept {
     if (_YAEF_UNLIKELY(block == 0)) { return 64; }
     uint32_t result = 0;
@@ -713,13 +713,65 @@ _YAEF_ATTR_NODISCARD inline uint64_t set_last_bits(uint64_t block, uint64_t valu
     return (block & (~make_mask_msb1(n))) | rotate_right(extract_first_bits(value, n), n);
 }
 
+// adapt from the implementation used in Sux project
+_YAEF_ATTR_NODISCARD inline uint32_t select_one_fallback(uint64_t block, uint32_t k) noexcept {
+    static constexpr uint8_t SELECT_IN_BYTE_LUT[2048] = {
+        8, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 5, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0,
+        6, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 5, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0,
+        7, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 5, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0,
+        6, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 5, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0,
+        8, 8, 8, 1, 8, 2, 2, 1, 8, 3, 3, 1, 3, 2, 2, 1, 8, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1, 8, 5, 5, 1, 5, 2, 2, 1, 5, 3, 3, 1, 3, 2, 2, 1, 5, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1,
+        8, 6, 6, 1, 6, 2, 2, 1, 6, 3, 3, 1, 3, 2, 2, 1, 6, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1, 6, 5, 5, 1, 5, 2, 2, 1, 5, 3, 3, 1, 3, 2, 2, 1, 5, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1,
+        8, 7, 7, 1, 7, 2, 2, 1, 7, 3, 3, 1, 3, 2, 2, 1, 7, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1, 7, 5, 5, 1, 5, 2, 2, 1, 5, 3, 3, 1, 3, 2, 2, 1, 5, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1,
+        7, 6, 6, 1, 6, 2, 2, 1, 6, 3, 3, 1, 3, 2, 2, 1, 6, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1, 6, 5, 5, 1, 5, 2, 2, 1, 5, 3, 3, 1, 3, 2, 2, 1, 5, 4, 4, 1, 4, 2, 2, 1, 4, 3, 3, 1, 3, 2, 2, 1,
+        8, 8, 8, 8, 8, 8, 8, 2, 8, 8, 8, 3, 8, 3, 3, 2, 8, 8, 8, 4, 8, 4, 4, 2, 8, 4, 4, 3, 4, 3, 3, 2, 8, 8, 8, 5, 8, 5, 5, 2, 8, 5, 5, 3, 5, 3, 3, 2, 8, 5, 5, 4, 5, 4, 4, 2, 5, 4, 4, 3, 4, 3, 3, 2,
+        8, 8, 8, 6, 8, 6, 6, 2, 8, 6, 6, 3, 6, 3, 3, 2, 8, 6, 6, 4, 6, 4, 4, 2, 6, 4, 4, 3, 4, 3, 3, 2, 8, 6, 6, 5, 6, 5, 5, 2, 6, 5, 5, 3, 5, 3, 3, 2, 6, 5, 5, 4, 5, 4, 4, 2, 5, 4, 4, 3, 4, 3, 3, 2,
+        8, 8, 8, 7, 8, 7, 7, 2, 8, 7, 7, 3, 7, 3, 3, 2, 8, 7, 7, 4, 7, 4, 4, 2, 7, 4, 4, 3, 4, 3, 3, 2, 8, 7, 7, 5, 7, 5, 5, 2, 7, 5, 5, 3, 5, 3, 3, 2, 7, 5, 5, 4, 5, 4, 4, 2, 5, 4, 4, 3, 4, 3, 3, 2,
+        8, 7, 7, 6, 7, 6, 6, 2, 7, 6, 6, 3, 6, 3, 3, 2, 7, 6, 6, 4, 6, 4, 4, 2, 6, 4, 4, 3, 4, 3, 3, 2, 7, 6, 6, 5, 6, 5, 5, 2, 6, 5, 5, 3, 5, 3, 3, 2, 6, 5, 5, 4, 5, 4, 4, 2, 5, 4, 4, 3, 4, 3, 3, 2,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 3, 8, 8, 8, 8, 8, 8, 8, 4, 8, 8, 8, 4, 8, 4, 4, 3, 8, 8, 8, 8, 8, 8, 8, 5, 8, 8, 8, 5, 8, 5, 5, 3, 8, 8, 8, 5, 8, 5, 5, 4, 8, 5, 5, 4, 5, 4, 4, 3,
+        8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 6, 8, 6, 6, 3, 8, 8, 8, 6, 8, 6, 6, 4, 8, 6, 6, 4, 6, 4, 4, 3, 8, 8, 8, 6, 8, 6, 6, 5, 8, 6, 6, 5, 6, 5, 5, 3, 8, 6, 6, 5, 6, 5, 5, 4, 6, 5, 5, 4, 5, 4, 4, 3,
+        8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 3, 8, 8, 8, 7, 8, 7, 7, 4, 8, 7, 7, 4, 7, 4, 4, 3, 8, 8, 8, 7, 8, 7, 7, 5, 8, 7, 7, 5, 7, 5, 5, 3, 8, 7, 7, 5, 7, 5, 5, 4, 7, 5, 5, 4, 5, 4, 4, 3,
+        8, 8, 8, 7, 8, 7, 7, 6, 8, 7, 7, 6, 7, 6, 6, 3, 8, 7, 7, 6, 7, 6, 6, 4, 7, 6, 6, 4, 6, 4, 4, 3, 8, 7, 7, 6, 7, 6, 6, 5, 7, 6, 6, 5, 6, 5, 5, 3, 7, 6, 6, 5, 6, 5, 5, 4, 6, 5, 5, 4, 5, 4, 4, 3,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 5, 8, 8, 8, 8, 8, 8, 8, 5, 8, 8, 8, 5, 8, 5, 5, 4,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 6, 8, 6, 6, 4, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 6, 8, 6, 6, 5, 8, 8, 8, 6, 8, 6, 6, 5, 8, 6, 6, 5, 6, 5, 5, 4,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 4, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 5, 8, 8, 8, 7, 8, 7, 7, 5, 8, 7, 7, 5, 7, 5, 5, 4,
+        8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 6, 8, 8, 8, 7, 8, 7, 7, 6, 8, 7, 7, 6, 7, 6, 6, 4, 8, 8, 8, 7, 8, 7, 7, 6, 8, 7, 7, 6, 7, 6, 6, 5, 8, 7, 7, 6, 7, 6, 6, 5, 7, 6, 6, 5, 6, 5, 5, 4,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 5,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 8, 8, 8, 8, 6, 8, 8, 8, 6, 8, 6, 6, 5,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 5,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 6, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 6, 8, 8, 8, 7, 8, 7, 7, 6, 8, 7, 7, 6, 7, 6, 6, 5,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 6,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 8, 8, 8, 8, 7, 8, 8, 8, 7, 8, 7, 7, 6,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8,
+        8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 7
+    };
+
+    constexpr uint64_t ONE_STEP4 = 0x1111111111111111ULL;
+    constexpr uint64_t ONE_STEP8 = 0x0101010101010101ULL;
+    constexpr uint64_t MSB_STEP8 = 0x80ULL * ONE_STEP8;
+
+    uint64_t s = block;
+    s = s - ((s & 0xA * ONE_STEP4) >> 1);
+    s = (s & 0x3 * ONE_STEP4) + ((s >> 2) & 0x3 * ONE_STEP4);
+    s = (s + (s >> 4)) & 0xF * ONE_STEP8;
+    uint64_t byte_sums = s * ONE_STEP8;
+
+    uint64_t place = bits64::popcount((((k * ONE_STEP8) | MSB_STEP8) - byte_sums) & MSB_STEP8) * 8;
+
+    uint64_t byte_rank = k - (((byte_sums << 8) >> place) & static_cast<uint64_t>(0xFF));
+    return place + SELECT_IN_BYTE_LUT[((block >> place) & 0xFF) | (byte_rank << 8)];
+}
+
 _YAEF_ATTR_NODISCARD inline uint32_t select_one(uint64_t block, uint32_t k) noexcept {
     _YAEF_ASSERT(k < 64);
 #if _YAEF_INTRINSICS_HAVE_BMI2
     return count_trailing_zero(_pdep_u64(static_cast<uint64_t>(1) << k, block));
 #else
-    return count_trailing_zero(_pdep_u64(static_cast<uint64_t>(1) << k, block));
-    // TODO: add fallback implementation.
+    return select_one_fallback(block, k);
 #endif
 }
 
@@ -745,22 +797,10 @@ public:
 
     packed_int_view(const packed_int_view &) = default;
 
-    packed_int_view(packed_int_view &&other) noexcept
-        : blocks_(details::exchange(other.blocks_, nullptr)),
-          num_elems_(details::exchange(other.num_elems_, 0)),
-          width_(details::exchange(other.width_, 0)) { }
-
     packed_int_view(uint32_t width, block_type *blocks, size_type num_elems) noexcept
         : blocks_(blocks), num_elems_(num_elems), width_(width) { }
 
     packed_int_view &operator=(const packed_int_view &) = default;
-
-    packed_int_view &operator=(packed_int_view &&other) noexcept {
-        blocks_ = details::exchange(other.blocks_, nullptr);
-        num_elems_ = details::exchange(other.num_elems_, 0);
-        width_ = details::exchange(other.width_, 0);
-        return *this;
-    }
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_elems_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
@@ -948,20 +988,10 @@ public:
 
     bit_view(const bit_view &) = default;
 
-    bit_view(bit_view &&other) noexcept
-        : blocks_(details::exchange(other.blocks_, nullptr)),
-          num_bits_(details::exchange(other.num_bits_, 0)) { }
-
     bit_view(block_type *blocks, size_type num_bits) noexcept
         : blocks_(blocks), num_bits_(num_bits) { }
 
     bit_view &operator=(const bit_view &) = default;
-
-    bit_view &operator=(bit_view &&other) noexcept {
-        blocks_ = details::exchange(other.blocks_, nullptr);
-        num_bits_ = details::exchange(other.num_bits_, 0);
-        return *this;
-    }
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_bits_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
@@ -1593,7 +1623,7 @@ class eliasfano_decoder_scalar_impl {
 public:
 };
 
-// A compressed pair to store a value with an allocator.
+// a compressed pair to store a value with an allocator (in most situation, allocator is an empty object)
 template<typename T, typename AllocT>
 class value_with_allocator_pair : private AllocT {
 public:
@@ -2493,7 +2523,7 @@ public:
         return iter != end() && *iter == target;
     }
 
-    const high_bits_type &get_high_bits() const noexcept { return high_bits_; }
+    _YAEF_ATTR_NODISCARD const high_bits_type &get_high_bits() const noexcept { return high_bits_; }
 
     void swap(eliasfano_list &other) 
         noexcept(alloc_traits::propagate_on_container_swap::value ||
@@ -3077,7 +3107,7 @@ private:
         _YAEF_ASSERT(get_alloc() == other_alloc);
     }
 
-    // Bitfields cannot be bound to reference.
+    // because bitfields cannot be bound to reference, std::swap cannot be used
     void swap_low_width_and_num_buckets_impl(eliasfano_sequence &other) noexcept {
         uint64_t low_width_tmp = low_width_;
         low_width_ = other.low_width_;
@@ -3209,7 +3239,7 @@ public:
     eliasfano_sparse_bitmap(eliasfano_sparse_bitmap &&other, const allocator_type &alloc)
         : pos_list_(std::move(other), alloc), num_bits_(details::exchange(other.num_bits_, 0)) { }
 
-    // Construct from the data of a plain bitmap (the number of indexed bits is unknown).
+    // construct from the data of a plain bitmap (the number of indexed bits is unknown)
     eliasfano_sparse_bitmap(const uint64_t *blocks, size_type num_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
@@ -3244,7 +3274,7 @@ public:
         pos_list_ = eliasfano_list<size_type, allocator_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
     }
 
-    // Construct from the data of a plain bitmap (the number of indexed bits is known).
+    // construct from the data of a plain bitmap (the number of indexed bits is known)
     eliasfano_sparse_bitmap(const uint64_t *blocks, size_type num_bits, 
                             size_type num_indexed_bits, const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
@@ -3288,14 +3318,14 @@ public:
         pos_list_ = eliasfano_list<size_type, allocator_type>{from_sorted, indices_first, indices_last, alloc};
     }
 
-    // Construct from the indices of indexed bits.
+    // construct from the indices of indexed bits
     eliasfano_sparse_bitmap(size_t num_bits, const size_type *indices, size_t num_indexed_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type, allocator_type>{indices, indices + num_indexed_bits, alloc};
     }
 
-    // Construct from the indices of indexed bits and indices are aussumed to be sorted.
+    // construct from the indices of indexed bits and indices are aussumed to be sorted
     eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, const size_type *indices, size_t num_indexed_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
@@ -3522,7 +3552,8 @@ public:
     }
 
     bit_buffer(bit_buffer &&other) noexcept {
-        get_view() = std::move(other.get_view());
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
     }
 
     bit_buffer(size_type size) {
@@ -3539,7 +3570,8 @@ public:
     }
 
     bit_buffer &operator=(bit_buffer &&other) noexcept {
-        get_view() = std::move(other.get_view());
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
         return *this;
     }
 
@@ -3664,7 +3696,8 @@ public:
     }
 
     packed_int_buffer(packed_int_buffer &&other) noexcept {
-        get_view() = std::move(other.get_view());
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
     }
 
     packed_int_buffer(uint32_t width, size_type size) {
@@ -3685,7 +3718,8 @@ public:
     }
 
     packed_int_buffer &operator=(packed_int_buffer &&other) noexcept {
-        get_view() = std::move(other.get_view());
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
         return *this;
     }
 
