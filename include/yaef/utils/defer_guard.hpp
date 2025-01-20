@@ -45,14 +45,14 @@ struct defer_guard_builder {
     }
 };
 
-}
+} // namespace util_details
 
 #define _YAEF_DEFER_IMPL_NAME() _YAEF_CONCAT(__ef_anonymous_defer_guard_, __LINE__)
 
 #define YAEF_DEFER auto _YAEF_DEFER_IMPL_NAME() = \
     ::yaef::utils::util_details::defer_guard_builder{} % [&]() -> void
 
-}
-}
+} // namespace utils
+} // namespace yaef
 
 #endif

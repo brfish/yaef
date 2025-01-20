@@ -1,5 +1,5 @@
-#ifndef __EF_UTILS_INT_GENERATOR_HPP__
-#define __EF_UTILS_INT_GENERATOR_HPP__
+#ifndef __YAEF_UTILS_INT_GENERATOR_HPP__
+#define __YAEF_UTILS_INT_GENERATOR_HPP__
 #pragma once
 
 #include <algorithm>
@@ -222,7 +222,7 @@ private:
     value_type do_next_value(random_engine &rng) override;
 };
 
-}
-}
+} // namespace utils
+} // namespace yaef
 
 #endif

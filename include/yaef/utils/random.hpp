@@ -1,5 +1,5 @@
-#ifndef __EF_UTILS_RANDOM_HPP__
-#define __EF_UTILS_RANDOM_HPP__
+#ifndef __YAEF_UTILS_RANDOM_HPP__
+#define __YAEF_UTILS_RANDOM_HPP__
 #pragma once
 
 #include <limits>
@@ -67,7 +67,7 @@ inline T safe_random(T min = std::numeric_limits<T>::min(),
     );
 }
 
-}
-}
+} // namespace utils
+} // namespace yaef
 
 #endif

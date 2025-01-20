@@ -152,7 +152,7 @@ private:
     uint64_t seed_;
 };
 
-}
-}
+} // namespace utils
+} // namespace yaef
 
 #endif

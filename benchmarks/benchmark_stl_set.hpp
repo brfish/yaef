@@ -16,7 +16,7 @@ public:
         return "stl_set";
     }
 
-    // Assume that each node of an STL implementation of a Red-Black Tree contains 3 pointers and a bool variable.
+    // assume that each node of an STL implementation of a Red-Black Tree contains 3 pointers and a bool variable
     size_type size_in_bytes() const noexcept {
         const size_type node_size = sizeof(void *) * 3 + sizeof(bool) + sizeof(int_type);
         return node_size * set_.size();

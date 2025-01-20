@@ -16,6 +16,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         REQUIRE(ints.size() == NUM_INTS);
         REQUIRE_NOTHROW(yaef::details::deallocate_packed_ints(alloc, ints));
     }
+
     SECTION("random access (get/set)") {
         constexpr size_t NUM_INTS = 10000;
         constexpr uint32_t MIN_INT = 10;
@@ -37,6 +38,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
             REQUIRE(actual == expected);
         }
     }
+
     SECTION("duplicate") {
         constexpr size_t NUM_INTS = 10000;
         constexpr uint32_t MIN_INT = 10;
@@ -58,6 +60,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         for (size_t i = 0; i < ints.size(); ++i)
             REQUIRE(ints.get_value(i) == copy.get_value(i));
     }
+
     SECTION("eqaul") {
         constexpr size_t NUM_INTS = 10000;
         constexpr uint32_t MIN_INT = 10;
@@ -81,6 +84,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         copy.set_value(0, copy.get_value(0) + 1);
         REQUIRE(ints != copy);
     }
+    
     SECTION("set/clear all bits") {
         using block_type = packed_int_view::block_type;
         constexpr uint32_t BLOCK_WIDTH = packed_int_view::BLOCK_WIDTH;

@@ -29,6 +29,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
         REQUIRE(bits == bits_ref);
         REQUIRE(popcnt == NUM_ONES);
     }
+    
     SECTION("foreach zeros") {
         bitset_foreach_zero_cursor cursor{bits.blocks(), bits.num_blocks()};
         size_t popcnt = 0;
@@ -43,6 +44,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
         REQUIRE(bits == bits_ref);
         REQUIRE(popcnt == NUM_ONES);
     }
+
     SECTION("foreach ones with offset") {
         constexpr uint32_t OFFSET = 1234;
         bitset_foreach_one_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
@@ -66,6 +68,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
         REQUIRE(bits == bits_ref);
         REQUIRE(popcnt == NUM_ONES - skipped_popcnt);
     }
+    
     SECTION("foreach zeros with offset") {
         constexpr uint32_t OFFSET = 27;
         bitset_foreach_zero_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
