@@ -219,6 +219,41 @@ inline void raise_assertion(const char *filename, int line, const char *expr) {
     ::fprintf(stderr, "[%s:%d] assertion `%s` failed.", filename, line, expr);
 }
 
+enum class prefetch_hint : int32_t {
+#if _YAEF_HAS_BUILTIN(__builtin_prefetch)
+    nta   = 0, 
+    tier2 = 1, 
+    tier1 = 2, 
+    tier0 = 3
+#else
+    nta   = _MM_HINT_NTA, 
+    tier2 = _MM_HINT_T2, 
+    tier1 = _MM_HINT_T1, 
+    tier0 = _MM_HINT_T0
+#endif
+};
+
+template<prefetch_hint Hint = prefetch_hint::tier0>
+_YAEF_ATTR_FORCEINLINE void prefetch_read(const void *p) noexcept {
+#if _YAEF_HAS_BUILTIN(__builtin_prefetch)
+    __builtin_prefetch(p, 0, static_cast<int>(Hint));
+#else
+    _mm_prefetch(p, static_cast<int>(Hint));
+#endif
+}
+
+template<prefetch_hint Hint = prefetch_hint::tier0>
+_YAEF_ATTR_FORCEINLINE void prefetch_write(void *p) noexcept {
+    _YAEF_STATIC_ASSERT_NOMSG(Hint == prefetch_hint::tier0 ||
+                              Hint == prefetch_hint::tier1);
+#if _YAEF_HAS_BUILTIN(__builtin_prefetch)
+    __builtin_prefetch(p, 1, static_cast<int>(Hint));
+#else
+    constexpr int REAL_HINT = Hint == prefetch_hint::tier0 ? _MM_HINT_ET0 : _MM_HINT_ET1;
+    _mm_prefetch(p, REAL_HINT);
+#endif
+}
+
 #if !_YAEF_USE_CXX_CONCEPTS
 template<typename T>
 struct is_bidirectional_iter
@@ -710,10 +745,22 @@ public:
 
     packed_int_view(const packed_int_view &) = default;
 
+    packed_int_view(packed_int_view &&other) noexcept
+        : blocks_(details::exchange(other.blocks_, nullptr)),
+          num_elems_(details::exchange(other.num_elems_, 0)),
+          width_(details::exchange(other.width_, 0)) { }
+
     packed_int_view(uint32_t width, block_type *blocks, size_type num_elems) noexcept
         : blocks_(blocks), num_elems_(num_elems), width_(width) { }
 
     packed_int_view &operator=(const packed_int_view &) = default;
+
+    packed_int_view &operator=(packed_int_view &&other) noexcept {
+        blocks_ = details::exchange(other.blocks_, nullptr);
+        num_elems_ = details::exchange(other.num_elems_, 0);
+        width_ = details::exchange(other.width_, 0);
+        return *this;
+    }
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_elems_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
@@ -751,6 +798,32 @@ public:
             set_value(i, value);
     }
 
+    void prefetch_for_read(size_type first, size_type last) const {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first * width() / BLOCK_WIDTH;
+        const size_type last_block_index = last * width() / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_read(blocks() + first_block_index + i);
+        }
+    }
+
+    void prefetch_for_write(size_type first, size_type last) {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first * width() / BLOCK_WIDTH;
+        const size_type last_block_index = last * width() / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_write(blocks() + first_block_index + i);
+        }
+    }
+
     _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept {
         _YAEF_ASSERT(index < size());
         const size_type bit_index = index * width();
@@ -768,7 +841,7 @@ public:
 
     void set_value(size_type index, value_type value) noexcept {
         _YAEF_ASSERT(index < size());
-        const size_type bit_index = index *width();
+        const size_type bit_index = index * width();
         const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
 
         block_type val = value;
@@ -875,21 +948,57 @@ public:
 
     bit_view(const bit_view &) = default;
 
+    bit_view(bit_view &&other) noexcept
+        : blocks_(details::exchange(other.blocks_, nullptr)),
+          num_bits_(details::exchange(other.num_bits_, 0)) { }
+
     bit_view(block_type *blocks, size_type num_bits) noexcept
         : blocks_(blocks), num_bits_(num_bits) { }
 
     bit_view &operator=(const bit_view &) = default;
 
+    bit_view &operator=(bit_view &&other) noexcept {
+        blocks_ = details::exchange(other.blocks_, nullptr);
+        num_bits_ = details::exchange(other.num_bits_, 0);
+        return *this;
+    }
+
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_bits_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
     _YAEF_ATTR_NODISCARD block_type *blocks() const noexcept { return blocks_; }
-    
+
     _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { 
         return bits64::idiv_ceil(num_bits_, BLOCK_WIDTH); 
     }
    
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
         return sizeof(block_type) * num_blocks();
+    }
+
+    void prefetch_for_read(size_type first, size_type last) const {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first / BLOCK_WIDTH;
+        const size_type last_block_index = last / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_read(blocks() + first_block_index + i);
+        }
+    }
+
+    void prefetch_for_write(size_type first, size_type last) {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first / BLOCK_WIDTH;
+        const size_type last_block_index = last / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_write(blocks() + first_block_index + i);
+        }
     }
 
     _YAEF_ATTR_NODISCARD value_type get_bit(size_type index) const noexcept {
@@ -1155,29 +1264,6 @@ using bitset_foreach_one_cursor = bitset_foreach_cursor<true>;
 using bitset_foreach_zero_cursor = bitset_foreach_cursor<false>;
 
 } // namespace bits64
-
-enum class prefetch_hint : int32_t {
-#if _YAEF_HAS_BUILTIN(__builtin_prefetch)
-    nta   = 0, 
-    tier2 = 1, 
-    tier1 = 2, 
-    tier0 = 3
-#else
-    nta   = _MM_HINT_NTA, 
-    tier2 = _MM_HINT_T2, 
-    tier1 = _MM_HINT_T1, 
-    tier0 = _MM_HINT_T0
-#endif
-};
-
-template<prefetch_hint Hint = prefetch_hint::tier0>
-_YAEF_ATTR_FORCEINLINE void prefetch_read(void *p) noexcept {
-#if _YAEF_HAS_BUILTIN(__builtin_prefetch)
-    __builtin_prefetch(p, 0, static_cast<int>(Hint));
-#else
-    _mm_prefetch(p, static_cast<int>(Hint));
-#endif
-}
 
 template<typename T, size_t Alignment = alignof(T)>
 class aligned_allocator {
@@ -1821,12 +1907,15 @@ private:
 
         _YAEF_ATTR_NODISCARD const bits64::packed_int_view &get_samples() const noexcept { return samples_; }
         _YAEF_ATTR_NODISCARD bits64::packed_int_view &get_samples() noexcept { return samples_; }
+
         _YAEF_ATTR_NODISCARD const bits64::packed_int_view &get_subsamples(subsampler_type type) const noexcept {
             return subsamples_[static_cast<size_type>(type)];
         }
+
         _YAEF_ATTR_NODISCARD bits64::packed_int_view &get_subsamples(subsampler_type type) noexcept {
             return subsamples_[static_cast<size_type>(type)];
         }
+        
         _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
             return samples_.space_usage_in_bytes() +
                    subsamples_[0].space_usage_in_bytes() +
@@ -2596,7 +2685,6 @@ private:
             }
             result = base;
         }
-        //const size_type num_skipped_zeros = result == end ? h + 1 : h;
         const size_type num_skipped_zeros = h + 1;
         return make_iter(result + num_skipped_zeros, result);
     }
@@ -3412,7 +3500,7 @@ inline bool operator!=(const eliasfano_sparse_bitmap<IndexedBitType, AllocT> &lh
 }
 #endif
 
-template<typename AllocT = details::aligned_allocator<uint8_t>>
+template<typename AllocT = details::aligned_allocator<uint8_t, 32>>
 class bit_buffer {
     using view_type       = details::bits64::bit_view;
     using inner_type      = details::value_with_allocator_pair<view_type, AllocT>;
@@ -3434,8 +3522,7 @@ public:
     }
 
     bit_buffer(bit_buffer &&other) noexcept {
-        get_view() = other.get_view();
-        other.get_view() = view_type{};
+        get_view() = std::move(other.get_view());
     }
 
     bit_buffer(size_type size) {
@@ -3452,8 +3539,7 @@ public:
     }
 
     bit_buffer &operator=(bit_buffer &&other) noexcept {
-        get_view() = other.get_view();
-        other.get_view() = view_type{};
+        get_view() = std::move(other.get_view());
         return *this;
     }
 
@@ -3474,6 +3560,14 @@ public:
 
     _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const { 
         return get_view().get_bit(index); 
+    }
+
+    void prefetch_for_read(size_type first, size_type last) const {
+        get_view().prefetch_for_read(first, last);
+    }
+
+    void prefetch_for_write(size_type first, size_type last) {
+        get_view().prefetch_for_write(first, last);
     }
 
     void set_all_bits() {
@@ -3547,7 +3641,7 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const bit_buffer<AllocT> &lhs,
 }
 #endif
 
-template<typename AllocT = details::aligned_allocator<uint8_t>>
+template<typename AllocT = details::aligned_allocator<uint8_t, 32>>
 class packed_int_buffer {
 public:
     using view_type       = details::bits64::packed_int_view;
@@ -3570,12 +3664,11 @@ public:
     }
 
     packed_int_buffer(packed_int_buffer &&other) noexcept {
-        get_view() = other.get_view();
-        other.get_view() = view_type{};
+        get_view() = std::move(other.get_view());
     }
 
     packed_int_buffer(uint32_t width, size_type size) {
-        if (width > 64) {
+        if (_YAEF_UNLIKELY(width > 64)) {
             _YAEF_THROW(std::runtime_error{
                 "packed_int_buffer::packed_int_buffer: the width of packed_int_buffer should be between 0 and 64."});
         }
@@ -3592,8 +3685,7 @@ public:
     }
 
     packed_int_buffer &operator=(packed_int_buffer &&other) noexcept {
-        get_view() = other.get_view();
-        other.get_view() = view_type{};
+        get_view() = std::move(other.get_view());
         return *this;
     }
 
@@ -3614,6 +3706,14 @@ public:
 
     void set_value(size_type index, value_type value) noexcept { 
         get_view().set_value(index, value); 
+    }
+
+    void prefetch_for_read(size_type first, size_type last) const {
+        get_view().prefetch_for_read(first, last);
+    }
+
+    void prefetch_for_write(size_type first, size_type last) {
+        get_view().prefetch_for_write(first, last);
     }
 
     _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {

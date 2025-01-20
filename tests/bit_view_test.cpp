@@ -30,6 +30,7 @@ TEST_CASE("bit_view_test", "[private]") {
             gen_result.view.set_bit(index);
             REQUIRE(gen_result.view.get_bit(index) == true);
         }
+        gen_result.view.prefetch_for_read(0, NUM_BITS);
         std::unordered_set<size_t> index_set{indices.begin(), indices.end()};
         for (size_t i = 0; i < NUM_BITS; ++i) {
             bool actual_bit = gen_result.view.get_bit(i);

@@ -30,6 +30,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         for (size_t i = 0; i < ints.size(); ++i)
             ints.set_value(i, gen_result[i]);
         
+        ints.prefetch_for_read(0, ints.size());
         for (size_t i = 0; i < ints.size(); ++i) {
             uint32_t actual = ints.get_value(i);
             uint32_t expected = gen_result[i];
