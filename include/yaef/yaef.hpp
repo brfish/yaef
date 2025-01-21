@@ -130,6 +130,16 @@
 #   define _YAEF_UNREACHABLE() ::abort()
 #endif
 
+#if _YAEF_HAS_BUILTIN(__builtin_assume)
+#   define _YAEF_ASSUME(_cond) __builtin_assume(_cond)
+#elif defined(__GNUC__)
+#   define _YAEF_ASSUME(_cond) __attribute__((assume(_cond)))
+#elif defined(_MSC_VER)
+#   define _YAEF_ASSUME(_cond) __assume(_cond)
+#else
+#   define _YAEF_ASSUME(_cond)
+#endif
+
 #if __cplusplus < 201703L
 #   define _YAEF_STATIC_ASSERT_NOMSG(...) static_assert(__VA_ARGS__, "")
 #else
@@ -642,14 +652,34 @@ static constexpr uint64_t MSB_MASK_LUT64[65] = {
     0xFFFFFFFFFFFFFF80ULL, 0xFFFFFFFFFFFFFFC0ULL, 0xFFFFFFFFFFFFFFE0ULL, 0xFFFFFFFFFFFFFFF0ULL, 0xFFFFFFFFFFFFFFF8ULL, 0xFFFFFFFFFFFFFFFCULL, 0xFFFFFFFFFFFFFFFEULL, 0xFFFFFFFFFFFFFFFFULL
 };
 
-_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_lsb1(uint32_t n) noexcept {
+_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_lsb1_lut(uint32_t n) noexcept {
     _YAEF_ASSERT(n <= 64);
     return LSB_MASK_LUT64[n];
 }
 
-_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_msb1(uint32_t n) noexcept {
+_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_msb1_lut(uint32_t n) noexcept {
     _YAEF_ASSERT(n <= 64);
     return MSB_MASK_LUT64[n];
+}
+
+_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_lsb1(uint32_t n) noexcept {
+    _YAEF_ASSERT(n <= 64);
+
+#if _YAEF_INTRINSICS_HAVE_BMI2
+    return _bzhi_u64(~static_cast<uint64_t>(0), n);
+#else
+    return make_mask_lsb1_lut(n);
+#endif
+}
+
+_YAEF_ATTR_NODISCARD _YAEF_ATTR_FORCEINLINE uint64_t make_mask_msb1(uint32_t n) noexcept {
+    _YAEF_ASSERT(n <= 64);
+
+#if _YAEF_INTRINSICS_HAVE_BMI2
+    return ~_bzhi_u64(~static_cast<uint64_t>(0), 64 - n);
+#else
+    return make_mask_msb1_lut(n);
+#endif
 }
 
 _YAEF_ATTR_NODISCARD inline bool get_bit(uint64_t block, uint32_t index) noexcept {
@@ -838,7 +868,7 @@ public:
             set_value(i, value);
     }
 
-    void prefetch_for_read(size_type first, size_type last) const {
+    void prefetch_for_read(size_type first, size_type last) const noexcept {
         _YAEF_ASSERT(first <= last);
         _YAEF_ASSERT(last <= size());
 
@@ -851,7 +881,7 @@ public:
         }
     }
 
-    void prefetch_for_write(size_type first, size_type last) {
+    void prefetch_for_write(size_type first, size_type last) noexcept {
         _YAEF_ASSERT(first <= last);
         _YAEF_ASSERT(last <= size());
 
@@ -1005,7 +1035,7 @@ public:
         return sizeof(block_type) * num_blocks();
     }
 
-    void prefetch_for_read(size_type first, size_type last) const {
+    void prefetch_for_read(size_type first, size_type last) const noexcept {
         _YAEF_ASSERT(first <= last);
         _YAEF_ASSERT(last <= size());
 
@@ -1018,7 +1048,7 @@ public:
         }
     }
 
-    void prefetch_for_write(size_type first, size_type last) {
+    void prefetch_for_write(size_type first, size_type last) noexcept {
         _YAEF_ASSERT(first <= last);
         _YAEF_ASSERT(last <= size());
 
@@ -1060,8 +1090,7 @@ public:
     }
 
     void set_all_bits() {
-        if (_YAEF_UNLIKELY(num_blocks() == 0))
-            return;
+        if (_YAEF_UNLIKELY(num_blocks() == 0)) { return; }
         std::fill_n(blocks_, num_blocks() - 1, std::numeric_limits<block_type>::max());
         blocks_[num_blocks() - 1] = make_mask_lsb1(size() - (num_blocks() - 1) * BLOCK_WIDTH);
     }
@@ -1208,7 +1237,9 @@ class bitset_foreach_cursor {
 public:
     using size_type     = size_t;
     using block_type    = uint64_t;
+    static constexpr bool BIT_TYPE = BitType;
     static constexpr uint32_t BLOCK_WIDTH = sizeof(block_type) * CHAR_BIT;
+
 private:
     using block_handler = conditional_bitwise_not<!BitType>;
 
@@ -1290,7 +1321,7 @@ private:
     }
 };
 
-using bitset_foreach_one_cursor = bitset_foreach_cursor<true>;
+using bitset_foreach_one_cursor  = bitset_foreach_cursor<true>;
 using bitset_foreach_zero_cursor = bitset_foreach_cursor<false>;
 
 } // namespace bits64
@@ -2156,8 +2187,11 @@ private:
         {
             bits_block_type bits_block = block_handler{}(bits_.blocks()[bits_block_index]) >> bits_block_offset;
             auto scan_res = scan_single_block(bits_block, BITS_BLOCK_WIDTH - bits_block_offset);
-            result += scan_res.second;
-            if (scan_res.first) {
+            bool stop = scan_res.first;
+            uint32_t step = scan_res.second;
+
+            result += step;
+            if (stop) {
                 return result;
             }
         }
@@ -2171,9 +2205,11 @@ private:
         for (size_type i = bits_block_index + 1; i < num_bits_block; ++i) {
             bits_block_type bits_block = block_handler{}(bits_.blocks()[i]);
             auto scan_res = scan_single_block(bits_block, BITS_BLOCK_WIDTH);
-            result += scan_res.second;
-            if (scan_res.first)
-                break;
+            bool stop = scan_res.first;
+            uint32_t step = scan_res.second;
+
+            result += step;
+            if (stop) { break; }
         }
         return result;
     }
@@ -3026,12 +3062,15 @@ protected:
     }
 
 private:
+    using data_pair = details::value_with_allocator_pair<
+        std::pair<value_type, value_type>, allocator_type>;
+
     size_type  size_;
     uint64_t  *high_bits_mem_;
     uint64_t  *low_bits_mem_;
     uint64_t   low_width_   : 6;
     uint64_t   num_buckets_ : 58;
-    details::value_with_allocator_pair<std::pair<value_type, value_type>, allocator_type> min_max_and_alloc_;
+    data_pair  min_max_and_alloc_;
 
     _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const noexcept { return min_max_and_alloc_.alloc(); }
     _YAEF_ATTR_NODISCARD allocator_type &get_alloc() noexcept { return min_max_and_alloc_.alloc(); }
