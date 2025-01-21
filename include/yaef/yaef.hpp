@@ -22,7 +22,7 @@
 #ifndef __YAEF_HPP__
 #define __YAEF_HPP__
 #pragma once
-
+#include <iostream>
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -63,6 +63,14 @@
 
 #if __cplusplus >= 201703L
 #   include <new> // for std::aligned_val_t
+#endif
+
+#if __cplusplus >= 201703L
+#   include <filesystem>
+#   if __cpp_lib_filesystem	>= 201703L
+#       define _YAEF_USE_STL_FILESYSTEM 1
+#       include <fstream>
+#   endif
 #endif
 
 #if __cpp_lib_span >= 202002L
@@ -2184,6 +2192,8 @@ private:
             }
         };
 
+        prefetch_read(bits_.blocks() + bits_block_index);
+
         {
             bits_block_type bits_block = block_handler{}(bits_.blocks()[bits_block_index]) >> bits_block_offset;
             auto scan_res = scan_single_block(bits_block, BITS_BLOCK_WIDTH - bits_block_offset);
@@ -3909,6 +3919,21 @@ inline error_code serialize_to_stream(const T &x, std::ostream &stream) {
     return details::serialize_friend_access::serialize(x, ser);
 }
 
+#if _YAEF_USE_STL_FILESYSTEM
+template<typename T>
+inline error_code serialize_to_file(const T &x, const std::filesystem::path &path, bool overwrite) {
+    auto open_flags = std::ios::out | std::ios::binary;
+    if (!overwrite) {
+        open_flags |= std::ios::app;
+    }
+    std::ofstream out(path, open_flags);
+    if (out.fail()) {
+        return error_code::serialize_io;
+    }
+    return serialize_to_stream(x, out);
+}
+#endif
+
 template<typename T>
 inline error_code deserialize_from_buf(T &x, const uint8_t *buf, size_t buf_size) {
     auto deser = details::deserializer{details::make_unique_obj<details::membuf_reader_context>(buf, buf_size)};
@@ -3937,6 +3962,18 @@ inline error_code deserialize_from_stream(T &x, std::istream &stream) {
     auto deser = details::deserializer{details::make_unique_obj<details::istream_reader_context>(stream)};
     return details::serialize_friend_access::deserialize(x, deser);
 }
+
+#if _YAEF_USE_STL_FILESYSTEM
+template<typename T>
+inline error_code deserialize_from_file(const T &x, const std::filesystem::path &path) {
+    auto open_flags = std::ios::in | std::ios::binary;
+    std::ifstream in(path, open_flags);
+    if (in.fail()) {
+        return error_code::deserialize_io;
+    }
+    return deserialize_from_stream(x, in);
+}
+#endif
 
 // not available now
 #if 0
