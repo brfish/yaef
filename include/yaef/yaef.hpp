@@ -22,7 +22,7 @@
 #ifndef __YAEF_HPP__
 #define __YAEF_HPP__
 #pragma once
-#include <iostream>
+
 #include <algorithm>
 #include <climits>
 #include <cstdint>
@@ -160,11 +160,30 @@
 #   define _YAEF_TRAIT_VAR(_trait, ...) _trait ## _v <__VA_ARGS__>
 #endif
 
+#ifdef __clang__
+#   if _YAEF_HAS_BUILTIN(__builtin_debugtrap)
+#       define _YAEF_DEBUGBREAK() __builtin_debugtrap()
+#   else
+#       define _YAEF_DEBUGBREAK() asm("int3")
+#   endif
+#elif defined(__GNUC__)
+#   if _YAEF_HAS_BUILTIN(__builtin_trap)
+#       define _YAEF_DEBUGBREAK() __builtin_trap()
+#   else
+#       define _YAEF_DEBUGBREAK() asm("int3")
+#   endif
+#elif defined(_MSC_VER)
+#   define _YAEF_DEBUGBREAK() __debugbreak()
+#else
+#   error "cannot find a suitable implementation for DEBUGBREAK"
+#   define _YAEF_DEBUGBREAK()
+#endif
+
 #ifdef NDEBUG
 #   define _YAEF_ASSERT(_expr)
 #else
 #   define _YAEF_ASSERT(_expr) do { if (!(_expr)) { \
-    ::yaef::details::raise_assertion(__FILE__, __LINE__, #_expr); __builtin_trap(); } } while (false)
+    ::yaef::details::raise_assertion(__FILE__, __LINE__, #_expr); _YAEF_DEBUGBREAK(); } } while (false)
 #endif
 
 #ifdef __BMI2__
@@ -752,6 +771,7 @@ _YAEF_ATTR_NODISCARD inline uint64_t set_last_bits(uint64_t block, uint64_t valu
 }
 
 // adapt from the implementation used in Sux project
+// reference: https://github.com/vigna/sux
 _YAEF_ATTR_NODISCARD inline uint32_t select_one_fallback(uint64_t block, uint32_t k) noexcept {
     static constexpr uint8_t SELECT_IN_BYTE_LUT[2048] = {
         8, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 5, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0, 4, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0,
