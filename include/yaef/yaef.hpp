@@ -2097,7 +2097,8 @@ private:
         }
 
         _YAEF_ATTR_NODISCARD sample_find_result find_nearest_sample(size_type rank) const noexcept {
-            const size_type block_index = rank / SAMPLE_RATE, block_offset = rank % SAMPLE_RATE;
+            const size_type block_index = rank / SAMPLE_RATE, 
+                            block_offset = rank % SAMPLE_RATE;
             uint64_t sample = samples_.get_value(block_index);
             if (block_offset == 0) {
                 return sample_find_result{0, sample};
@@ -2255,8 +2256,6 @@ private:
             }
         };
 
-        prefetch_read(bits_.blocks() + bits_block_index);
-
         {
             bits_block_type bits_block = block_handler{}(bits_.blocks()[bits_block_index]) >> bits_block_offset;
             auto scan_res = scan_single_block(bits_block, BITS_BLOCK_WIDTH - bits_block_offset);
@@ -2270,6 +2269,9 @@ private:
         }
 
         const size_type num_bits_block = bits_.num_blocks();
+
+        prefetch_read(bits_.blocks() + bits_block_index + 1);
+
 #ifdef __clang__
 #   pragma clang loop unroll_count(4)
 #elif defined(__GNUC__)
@@ -2291,6 +2293,7 @@ public:
     _YAEF_ATTR_NODISCARD memory_access_stats select_one_scan_count(size_type rank) const noexcept {
         return select_impl_scan_count<true>(rank);
     }
+
     _YAEF_ATTR_NODISCARD memory_access_stats  select_zero_scan_count(size_type rank) const noexcept {
         return select_impl_scan_count<false>(rank);
     }
@@ -2622,13 +2625,25 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator lower_bound(value_type target) const noexcept {
-        return search_impl(target, [](value_type elem, value_type t) -> bool {
+        return search_iter_impl(target, [](value_type elem, value_type t) -> bool {
             return elem < t;
         });
     }
 
     _YAEF_ATTR_NODISCARD const_iterator upper_bound(value_type target) const noexcept {
-        return search_impl(target, [](value_type elem, value_type t) -> bool {
+        return search_iter_impl(target, [](value_type elem, value_type t) -> bool {
+            return elem <= t;
+        });
+    }
+
+    _YAEF_ATTR_NODISCARD size_type index_of_lower_bound(value_type target) const noexcept {
+        return search_index_impl(target, [](value_type elem, value_type t) -> bool {
+            return elem < t;
+        });
+    }
+
+    _YAEF_ATTR_NODISCARD size_type index_of_upper_bound(value_type target) const noexcept {
+        return search_index_impl(target, [](value_type elem, value_type t) -> bool {
             return elem <= t;
         });
     }
@@ -2804,19 +2819,23 @@ private:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator make_iter(size_type high_bit_offset, size_type index) const noexcept {
+        if (index == size()) { return end(); }
         details::bits64::bitset_foreach_one_cursor high_bits_cursor{high_bits_.get_bits(), high_bit_offset};
         return const_iterator{high_bits_cursor, get_low_bits(), min(), index};
     }
 
+    struct search_result { size_type num_skipped_zeros; size_type index;};
+
     template<typename CmpElemWithTargetT>
-    _YAEF_ATTR_NODISCARD const_iterator search_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
+    _YAEF_ATTR_NODISCARD search_result
+    search_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
         constexpr size_type LINEAR_SEARCH_THRESHOLD = 32;
 
         if (_YAEF_UNLIKELY(!cmp(min(), target))) {
-            return begin();
+            return search_result{0, 0};
         }
         if (_YAEF_UNLIKELY(cmp(max(), target))) {
-            return end();
+            return search_result{0, size()};
         }
 
         const size_type num_zeros = high_bits_.size() - size();
@@ -2846,7 +2865,21 @@ private:
             result = base;
         }
         const size_type num_skipped_zeros = h + 1;
-        return make_iter(result + num_skipped_zeros, result);
+        return search_result{num_skipped_zeros, result};
+    }
+
+    template<typename CmpElemWithTargetT>
+    _YAEF_ATTR_NODISCARD const_iterator 
+    search_index_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
+        auto result = search_impl(target, cmp);
+        return result.index;
+    }
+
+    template<typename CmpElemWithTargetT>
+    _YAEF_ATTR_NODISCARD const_iterator 
+    search_iter_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
+        auto result = search_impl(target, cmp);
+        return make_iter(result.index + result.num_skipped_zeros, result.index);
     }
 };
 
