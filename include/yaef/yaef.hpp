@@ -73,6 +73,13 @@
 #   endif
 #endif
 
+#if __cplusplus >= 202002L
+#   include <ranges>
+#   if __cpp_lib_ranges >= 201911L
+#       define _YAEF_USE_STL_RANGES_ALG 1
+#   endif
+#endif
+
 #if __cpp_lib_span >= 202002L
 #   include <span>
 #   define _YAEF_USE_STL_SPAN 1
@@ -292,17 +299,50 @@ _YAEF_ATTR_FORCEINLINE void prefetch_write(void *p) noexcept {
 }
 
 #if !_YAEF_USE_CXX_CONCEPTS
+
+#if __cpp_lib_void_t >= 201411L
+template<typename ...Ts>
+using void_t = std::void_t<Ts...>;
+#else
+template<typename ...>
+using void_t = void;
+#endif
+
+#if __cpp_lib_remove_cvref >= 201711L
 template<typename T>
-struct is_bidirectional_iter
-    : public std::is_base_of<std::bidirectional_iterator_tag,
-                             typename std::iterator_traits<T>::iterator_category> { };
+using remove_cvref = std::remove_cvref<T>;
+#else
 template<typename T>
-struct is_random_access_iter 
+using remove_cvref = std::remove_cv<typename std::remove_reference<T>::type>;
+#endif
+
+template<typename T, typename = void>
+struct is_bidirectional_iter : std::false_type { };
+
+template<typename T>
+struct is_bidirectional_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>>
+    : std::is_base_of<std::bidirectional_iterator_tag,
+                     typename std::iterator_traits<T>::iterator_category> { };
+
+template<typename T, typename = void>
+struct is_random_access_iter : std::false_type { };
+
+template<typename T>
+struct is_random_access_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>> 
     : public std::is_base_of<std::random_access_iterator_tag, 
                              typename std::iterator_traits<T>::iterator_category> { };
-template<typename T>
-struct is_random_access_iter<T *> : std::true_type { };
 #endif
+
+template<typename InputIterT, typename SentIterT>
+_YAEF_ATTR_NODISCARD inline ptrdiff_t iter_distance(InputIterT first, SentIterT last) {
+#if _YAEF_USE_STL_RANGES_ALG
+    return std::ranges::distance(first, last);
+#else
+    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename details::remove_cvref<InputIterT>::type,
+                                           typename details::remove_cvref<SentIterT>::type>::value);
+    return std::distance(first, last);
+#endif
+}
 
 template<typename T, typename ...ArgTs>
 _YAEF_ATTR_NODISCARD inline std::unique_ptr<T> make_unique_obj(ArgTs &&...args) {
@@ -1572,22 +1612,24 @@ inline error_code bit_view::deserialize(AllocT &alloc, deserializer &deser) {
 
 }
 
-template<typename T, typename InputIterT>
+template<typename T, typename InputIterT, typename SentIterT>
 class eliasfano_encoder_scalar_impl {
 public:
     using value_type = T;
     using size_type  = size_t;
 
 public:
-    eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, 
+    eliasfano_encoder_scalar_impl(InputIterT first, SentIterT last, size_type num,
                                   value_type min, value_type max, uint32_t low_width)
-        : first_(first), last_(last), size_(std::distance(first, last)), 
+        : first_(first), last_(last), size_(num), 
           min_(min), max_(max), low_width_(low_width) {
         _YAEF_ASSERT(low_width_ > 0 && low_width_ <= 64);
     }
     
-    eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, value_type min, value_type max)
-        : first_(first), last_(last), size_(std::distance(first, last)), min_(min), max_(max), low_width_(0) {
+    eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, size_type num, 
+                                  value_type min, value_type max)
+        : first_(first), last_(last), size_(num), 
+          min_(min), max_(max), low_width_(0) {
         const uint64_t u = to_stored_value(max_);
         low_width_ = std::max<uint32_t>(1, bits64::bit_width(u / size_));
     }
@@ -1597,9 +1639,10 @@ public:
 #else
     template<typename IterT = InputIterT, typename = typename std::enable_if<is_bidirectional_iter<IterT>::value>::type>
 #endif
-    eliasfano_encoder_scalar_impl(IterT first, IterT last)
-        : first_(first), last_(last), size_(std::distance(first, last)),
-          min_(std::numeric_limits<value_type>::max()), max_(std::numeric_limits<value_type>::min()),
+    eliasfano_encoder_scalar_impl(IterT first, IterT last, size_type num)
+        : first_(first), last_(last), size_(num),
+          min_(std::numeric_limits<value_type>::max()), 
+          max_(std::numeric_limits<value_type>::min()),
           low_width_(0) {
         if (size_ != 0) {
             min_ = *first;
@@ -1666,7 +1709,7 @@ public:
 
 private:
     InputIterT first_;
-    InputIterT last_;
+    SentIterT  last_;
     size_type  size_;
     value_type min_;
     value_type max_;
@@ -2434,12 +2477,15 @@ public:
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
 #else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
 #endif
-    eliasfano_list(RandomAccessIterT first, RandomAccessIterT last, 
+    eliasfano_list(RandomAccessIterT first, SentIterT last, 
                    const allocator_type &alloc = allocator_type{})
         : eliasfano_list(alloc) {
         auto sorted_info = sorted_seq_info::create(first, last);
@@ -2451,12 +2497,15 @@ public:
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
 #else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
 #endif
-    eliasfano_list(from_sorted_t, RandomAccessIterT first, RandomAccessIterT last, 
+    eliasfano_list(from_sorted_t, RandomAccessIterT first, SentIterT last, 
                    const allocator_type &alloc = allocator_type{})
         : eliasfano_list(alloc) {
         auto sorted_info = sorted_seq_info::unchecked_create(first, last);
@@ -2644,43 +2693,58 @@ private:
         value_type min;
         value_type max;
 
-        template<typename RandomAccessIterT>
-        _YAEF_ATTR_NODISCARD static sorted_seq_info
-        create(RandomAccessIterT first, RandomAccessIterT last) {
-            if (first > last || !std::is_sorted(first, last)) {
+        template<typename RandomAccessIterT, typename SentIterT>
+        _YAEF_ATTR_NODISCARD static sorted_seq_info 
+        create(RandomAccessIterT first, SentIterT last) {
+            if (first > last) {
                 return sorted_seq_info{false, 0, 0, 0};
             }
+
+#if _YAEF_USE_STL_RANGES_ALG
+            if (!std::ranges::is_sorted(first, last)) {
+                return sorted_seq_info{false, 0, 0, 0};
+            }
+#else
+            if (!std::is_sorted(first, last)) {
+                return sorted_seq_info{false, 0, 0, 0};
+            }
+#endif
             return sorted_seq_info{
                 true,
-                static_cast<size_type>(std::distance(first, last)),
+                static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
             };
         }
 
-        template<typename RandomAccessIterT>
+        template<typename RandomAccessIterT, typename SentIterT>
         _YAEF_ATTR_NODISCARD static sorted_seq_info 
-        unchecked_create(RandomAccessIterT first, RandomAccessIterT last) {
+        unchecked_create(RandomAccessIterT first, SentIterT last) {
             _YAEF_ASSERT(first <= last);
+#if _YAEF_USE_STL_RANGES_ALG
+            _YAEF_ASSERT(std::ranges::is_sorted(first, last));
+#else
             _YAEF_ASSERT(std::is_sorted(first, last));
+#endif
             return sorted_seq_info{
                 true,
-                static_cast<size_type>(std::distance(first, last)),
+                static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
             };
         }
     };
 
-    template<typename RandomAccessIterT>
-    void unchecked_init_with_low_width(RandomAccessIterT first, RandomAccessIterT last, 
+    template<typename RandomAccessIterT, typename SentIterT>
+    void unchecked_init_with_low_width(RandomAccessIterT first, SentIterT last, 
                                        sorted_seq_info sorted_info, uint32_t low_width) {
         _YAEF_ASSERT(low_width > 0);
         min_ = sorted_info.min;
         max_ = sorted_info.max;
+        size_type num_elems = details::iter_distance(first, last);
 
-        using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT>;
-        encoder_type encoder{first, last, sorted_info.min, sorted_info.max, low_width};
+        using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT, SentIterT>;
+        encoder_type encoder{first, last, num_elems, sorted_info.min, sorted_info.max, low_width};
         
         get_low_bits() = details::allocate_packed_ints(get_alloc(), low_width, sorted_info.num);
         encoder.unchecked_enocde_low_bits(get_low_bits().blocks());
@@ -2932,12 +2996,15 @@ public:
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
 #else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
 #endif
-    eliasfano_sequence(RandomAccessIterT first, RandomAccessIterT last,
+    eliasfano_sequence(RandomAccessIterT first, SentIterT last,
                        const allocator_type &alloc = allocator_type{})
         : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
         if (!std::is_sorted(first, last)) {
@@ -3105,10 +3172,10 @@ private:
     _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const noexcept { return min_max_and_alloc_.alloc(); }
     _YAEF_ATTR_NODISCARD allocator_type &get_alloc() noexcept { return min_max_and_alloc_.alloc(); }
 
-    template<typename RandomAccessIterT>
-    void unchecked_init(RandomAccessIterT first, RandomAccessIterT last) {
-        using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT>;
-        encoder_type encoder{first, last};
+    template<typename RandomAccessIterT, typename SentIterT>
+    void unchecked_init(RandomAccessIterT first, SentIterT last) {
+        using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT, SentIterT>;
+        encoder_type encoder{first, last, static_cast<size_type>(details::iter_distance(first, last))};
         size_ = encoder.size();
         low_width_ = encoder.low_width();
         num_buckets_ = (static_cast<uint64_t>(encoder.max()) - static_cast<uint64_t>(encoder.min())) >> low_width_;
@@ -3210,7 +3277,7 @@ _YAEF_ATTR_NODISCARD inline bool operator==(const eliasfano_sequence<T, AllocT> 
 #if __cplusplus >= 202002L
 template<typename T, typename AllocT>
 _YAEF_ATTR_NODISCARD inline std::strong_ordering operator<=>(const eliasfano_sequence<T, AllocT> &lhs, 
-                                                            const eliasfano_sequence<T, AllocT> &rhs) {
+                                                             const eliasfano_sequence<T, AllocT> &rhs) {
     if (_YAEF_UNLIKELY(std::addressof(lhs) == std::addressof(rhs))) {
         return std::strong_ordering::equivalent;
     }

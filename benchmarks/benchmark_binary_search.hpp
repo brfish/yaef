@@ -119,9 +119,6 @@ private:
         size_type len = size_;
         while (len > 0) {
             size_type half = len / 2;
-            //len -= half;
-            //__builtin_prefetch(&base[len / 2 - 1]);
-            //__builtin_prefetch(&base[len / 2 - 1 + half]);
             base += (base[half] < target) * (len - half);
             len = half;
         }
@@ -133,9 +130,6 @@ private:
         size_type len = size_;
         while (len > 0) {
             size_type half = len / 2;
-            //len -= half;
-            //__builtin_prefetch(&base[len / 2 - 1]);
-            //__builtin_prefetch(&base[len / 2 - 1 + half]);
             base += (base[half] <= target) * (len - half);
             len = half;
         }

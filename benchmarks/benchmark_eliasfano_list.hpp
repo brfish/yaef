@@ -1,6 +1,5 @@
 #pragma once
 
-#include <map>
 #include "common.hpp"
 
 #include "yaef/yaef.hpp"
@@ -23,18 +22,6 @@ public:
 
     void build(const int_type *values, size_type size) {
         list_ = yaef::eliasfano_list<int_type>{yaef::from_sorted, values, values + size};
-        /*auto stats = yaef::details::bits64::stats_bits(list_.get_high_bits().get_bits());
-        std::cout << "ones: " << stats.num_ones() << "\n"
-                  << "zeros: " << stats.num_zeros() << "\n"
-                  << "one_density: " << stats.one_density() * 100.0 << "%\n";
-        auto bits = list_.get_high_bits().get_bits();
-        std::map<uint32_t, size_t> hist;
-        for (size_t i = 0; i < bits.num_blocks(); ++i) {
-            ++hist[std::popcount(bits.blocks()[i])];
-        }
-        for (const auto &[k, v] : hist) {
-            std::cout << "popcnt = " << k << ": " << v << "\n";
-        }*/
     }
 
     void random_access(const size_type *indices, size_type size) {
