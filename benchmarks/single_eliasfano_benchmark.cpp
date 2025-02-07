@@ -1,3 +1,5 @@
+#include <numeric>
+
 #include "yaef/yaef.hpp"
 
 #include "common.hpp"

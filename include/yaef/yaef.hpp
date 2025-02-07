@@ -41,6 +41,7 @@
 
 #ifdef _MSC_VER
 #   include <intrin.h>
+#   pragma intrinsic(_mm_prefetch)
 #endif
 
 #if __cplusplus >= 202002L
@@ -281,6 +282,9 @@ template<prefetch_hint Hint = prefetch_hint::tier0>
 _YAEF_ATTR_FORCEINLINE void prefetch_read(const void *p) noexcept {
 #if _YAEF_HAS_BUILTIN(__builtin_prefetch)
     __builtin_prefetch(p, 0, static_cast<int>(Hint));
+#elif defined(_MSC_VER)
+    _mm_prefetch(const_cast<char *>(reinterpret_cast<const char *>(p)),
+                 static_cast<int>(Hint));
 #else
     _mm_prefetch(p, static_cast<int>(Hint));
 #endif
@@ -292,6 +296,8 @@ _YAEF_ATTR_FORCEINLINE void prefetch_write(void *p) noexcept {
                               Hint == prefetch_hint::tier1);
 #if _YAEF_HAS_BUILTIN(__builtin_prefetch)
     __builtin_prefetch(p, 1, static_cast<int>(Hint));
+#elif defined(_MSC_VER)
+    // do nothing in MSVC compilers.
 #else
     constexpr int REAL_HINT = Hint == prefetch_hint::tier0 ? _MM_HINT_ET0 : _MM_HINT_ET1;
     _mm_prefetch(p, REAL_HINT);
@@ -2460,7 +2466,7 @@ public:
     eliasfano_list(const eliasfano_list &other)
         : eliasfano_list(alloc_traits::select_on_container_copy_construction(other.get_alloc())) {
         high_bits_ = other.high_bits_.duplicate(get_alloc());
-        get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
+        get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.get_low_bits());
         min_ = other.min_;
         max_ = other.max_;
         has_duplicates_ = other.has_duplicates_;
@@ -2478,7 +2484,7 @@ public:
     eliasfano_list(const eliasfano_list &other, const allocator_type &alloc)
         : eliasfano_list(alloc) {
         high_bits_ = other.high_bits_.duplicate(get_alloc());
-        get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
+        get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.get_low_bits());
         min_ = other.min_;
         max_ = other.max_;
         has_duplicates_ = other.has_duplicates_;
@@ -2491,7 +2497,7 @@ public:
             get_low_bits() = details::exchange(other.get_low_bits(), low_bits_type{}); 
         } else {
             high_bits_ = other.high_bits_.duplicate(get_alloc());
-            get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
+            get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.get_low_bits());
         }
         min_ = details::exchange(other.min_, std::numeric_limits<value_type>::max());
         max_ = details::exchange(other.max_, std::numeric_limits<value_type>::min());

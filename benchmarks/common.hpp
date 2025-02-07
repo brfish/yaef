@@ -12,7 +12,7 @@
 #ifdef _MSC_VER
 #pragma optimize("", off)
 inline void dont_optimize_away(const void *) noexcept { }
-#pragma optmize("", on)
+#pragma optimize("", on)
 
 template<typename T>
 inline void dont_optimize(T &value) noexcept {
