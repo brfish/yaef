@@ -41,14 +41,14 @@ public:
 
     void lower_bound(const int_type *targets, size_type size) {
         for (size_type i = 0; i < size; ++i) {
-            auto iter = list_.lower_bound(targets[i]);
+            auto iter = list_.index_of_lower_bound(targets[i]);
             dont_optimize(iter);
         }
     }
 
     void upper_bound(const int_type *targets, size_type size) {
         for (size_type i = 0; i < size; ++i) {
-            auto iter = list_.upper_bound(targets[i]);
+            auto iter = list_.index_of_upper_bound(targets[i]);
             dont_optimize(iter);
         }
     }

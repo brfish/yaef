@@ -89,6 +89,9 @@ TEST_CASE("eliasfano_list_test", "[public]") {
             size_t expected_index = std::distance(ints.begin(), expected_iter);
             size_t actual_index = std::distance(list.begin(), actual_iter);
             REQUIRE(expected_index == actual_index);
+
+            auto actual_index_of = list.index_of_lower_bound(target);
+            REQUIRE(expected_index == actual_index_of);
         };
 
         auto test_upper_bound = [&](int_type target) {
@@ -104,6 +107,9 @@ TEST_CASE("eliasfano_list_test", "[public]") {
             size_t expected_index = std::distance(ints.begin(), expected_iter);
             size_t actual_index = std::distance(list.begin(), actual_iter);
             REQUIRE(expected_index == actual_index);
+
+            auto actual_index_of = list.index_of_upper_bound(target);
+            REQUIRE(expected_index == actual_index_of);
         };
 
         test_lower_bound(list.min() - 2);
@@ -145,6 +151,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
+        bool has_duplicates = list.has_duplicates();
 
         const size_t bytes_mem_size = 2 * 1024 * 1024;
         std::unique_ptr<uint8_t []> bytes_mem(new uint8_t[bytes_mem_size]);
@@ -158,6 +165,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
             for (size_t i = 0; i < list.size(); ++i) {
                 REQUIRE(deserialized_list.at(i) == list.at(i));
             }
+            REQUIRE(deserialized_list.has_duplicates() == has_duplicates);
         }
     }
 
@@ -169,6 +177,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
+        bool has_duplicates = list.has_duplicates();
 
         REQUIRE(yaef::serialize_to_file(list, "tmp.yaef", true) == yaef::error_code::success);
         {
@@ -179,6 +188,14 @@ TEST_CASE("eliasfano_list_test", "[public]") {
             for (size_t i = 0; i < list.size(); ++i) {
                 REQUIRE(deserialized_list.at(i) == list.at(i));
             }
+            REQUIRE(deserialized_list.has_duplicates() == has_duplicates);
         }
+    }
+
+    SECTION("check if list contains duplicates") {
+        yaef::eliasfano_list<uint32_t> list{1, 2, 3, 4, 5};
+        REQUIRE(!list.has_duplicates());
+        yaef::eliasfano_list<uint32_t> dup_list{1, 2, 2, 3, 3, 5};
+        REQUIRE(dup_list.has_duplicates());
     }
 }

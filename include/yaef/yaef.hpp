@@ -2449,8 +2449,7 @@ public:
     eliasfano_list() = default;
 
     eliasfano_list(const allocator_type &alloc)
-        : low_bits_with_alloc_(details::bits64::packed_int_view{}, alloc), 
-          min_(0), max_(0) { }
+        : low_bits_with_alloc_(details::bits64::packed_int_view{}, alloc) { }
 
     eliasfano_list(const eliasfano_list &other)
         : eliasfano_list(alloc_traits::select_on_container_copy_construction(other.get_alloc())) {
@@ -2458,14 +2457,16 @@ public:
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         min_ = other.min_;
         max_ = other.max_;
+        has_duplicates_ = other.has_duplicates_;
     }
 
     eliasfano_list(eliasfano_list &&other) noexcept {
         high_bits_ = details::exchange(other.high_bits_, high_bits_type{});
         get_low_bits() = details::exchange(other.get_low_bits(), low_bits_type{});
         swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
-        min_ = other.min_;
-        max_ = other.max_;
+        min_ = details::exchange(other.min_, std::numeric_limits<value_type>::max());
+        max_ = details::exchange(other.max_, std::numeric_limits<value_type>::min());
+        has_duplicates_ = details::exchange(other.has_duplicates_, false);
     }
 
     eliasfano_list(const eliasfano_list &other, const allocator_type &alloc)
@@ -2474,6 +2475,7 @@ public:
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         min_ = other.min_;
         max_ = other.max_;
+        has_duplicates_ = other.has_duplicates_;
     }
 
     eliasfano_list(eliasfano_list &&other, const allocator_type &alloc)
@@ -2485,8 +2487,9 @@ public:
             high_bits_ = other.high_bits_.duplicate(get_alloc());
             get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.low_bits_);
         }
-        min_ = other.min_;
-        max_ = other.max_;
+        min_ = details::exchange(other.min_, std::numeric_limits<value_type>::max());
+        max_ = details::exchange(other.max_, std::numeric_limits<value_type>::min());
+        has_duplicates_ = details::exchange(other.has_duplicates_, false);
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
@@ -2505,7 +2508,9 @@ public:
         if (!sorted_info.valid) {
             _YAEF_THROW(std::invalid_argument{"eliasfano_list::eliasfano_list: the input data is not sorted"});
         }
-        const uint32_t low_width = details::bits64::bit_width(to_stored_value(sorted_info.max) / sorted_info.num);
+        auto u = static_cast<unsigned_value_type>(sorted_info.max) - 
+                 static_cast<unsigned_value_type>(sorted_info.min);
+        const uint32_t low_width = details::bits64::bit_width(u / sorted_info.num);
         unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
     }
 
@@ -2522,12 +2527,17 @@ public:
                    const allocator_type &alloc = allocator_type{})
         : eliasfano_list(alloc) {
         auto sorted_info = sorted_seq_info::unchecked_create(first, last);
-        const uint32_t low_width = details::bits64::bit_width(to_stored_value(sorted_info.max) / sorted_info.num);
+        auto u = static_cast<unsigned_value_type>(sorted_info.max) - 
+                 static_cast<unsigned_value_type>(sorted_info.min);
+        const uint32_t low_width = details::bits64::bit_width(u / sorted_info.num);
         unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
     }
 
     eliasfano_list(std::initializer_list<value_type> initlist)
         : eliasfano_list(initlist.begin(), initlist.end()) { }
+    
+    eliasfano_list(from_sorted_t, std::initializer_list<value_type> initlist)
+        : eliasfano_list(from_sorted, initlist.begin(), initlist.end()) { }
 
     ~eliasfano_list() {
         high_bits_.deallocate(get_alloc());
@@ -2542,6 +2552,7 @@ public:
         get_low_bits() = details::duplicate_packed_ints(get_alloc(), other.get_low_bits());
         min_ = other.min_;
         max_ = other.max_;
+        has_duplicates_ = other.has_duplicates_;
         return *this;
     }
 
@@ -2553,15 +2564,17 @@ public:
         other.high_bits_ = high_bits_type{};
         get_low_bits() = other.get_low_bits(); 
         other.get_low_bits() = low_bits_type{};
-        min_ = other.min_;
-        max_ = other.max_;
+        min_ = details::exchange(other.min_, std::numeric_limits<value_type>::max());
+        max_ = details::exchange(other.max_, std::numeric_limits<value_type>::min());
+        has_duplicates_ = details::exchange(other.has_duplicates_, false);
         return *this;
     }
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return get_low_bits().size(); }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const noexcept { return get_alloc(); }
-    
+    _YAEF_ATTR_NODISCARD bool has_duplicates() const { return has_duplicates_; }
+
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
         return high_bits_.space_usage_in_bytes() +
                get_low_bits().space_usage_in_bytes();
@@ -2694,6 +2707,7 @@ protected:
         _YAEF_RETURN_ERR_IF_FAIL(get_low_bits().serialize(ser));
         if (!ser.write(min_)) { return error_code::serialize_io; }
         if (!ser.write(max_)) { return error_code::serialize_io; }
+        if (!ser.write(has_duplicates_)) { return error_code::serialize_io; }
         return error_code::success;
     }
 
@@ -2702,6 +2716,7 @@ protected:
         _YAEF_RETURN_ERR_IF_FAIL(get_low_bits().deserialize(get_alloc(), deser));
         if (!deser.read(min_)) { return error_code::deserialize_io; }
         if (!deser.read(max_)) { return error_code::deserialize_io; }
+        if (!deser.read(has_duplicates_)) { return error_code::deserialize_io; }
         return error_code::success;
     }
 
@@ -2709,33 +2724,36 @@ private:
     using low_bits_with_alloc_type = details::value_with_allocator_pair<low_bits_type, allocator_type>;
     high_bits_type           high_bits_;
     low_bits_with_alloc_type low_bits_with_alloc_;
-    value_type               min_;
-    value_type               max_;
+    value_type               min_ = std::numeric_limits<value_type>::max();
+    value_type               max_ = std::numeric_limits<value_type>::min();
+    bool                     has_duplicates_ = false;
 
     struct sorted_seq_info {
-        bool       valid;
-        size_type  num;
-        value_type min;
-        value_type max;
+        bool       valid = false;
+        bool       has_duplicates = false;
+        size_type  num = 0;
+        value_type min = std::numeric_limits<value_type>::max();
+        value_type max = std::numeric_limits<value_type>::min();
 
         template<typename RandomAccessIterT, typename SentIterT>
         _YAEF_ATTR_NODISCARD static sorted_seq_info 
         create(RandomAccessIterT first, SentIterT last) {
             if (first > last) {
-                return sorted_seq_info{false, 0, 0, 0};
+                return sorted_seq_info{};
             }
 
 #if _YAEF_USE_STL_RANGES_ALG
             if (!std::ranges::is_sorted(first, last)) {
-                return sorted_seq_info{false, 0, 0, 0};
+                return sorted_seq_info{};
             }
 #else
             if (!std::is_sorted(first, last)) {
-                return sorted_seq_info{false, 0, 0, 0};
+                return sorted_seq_info{};
             }
 #endif
             return sorted_seq_info{
                 true,
+                check_duplicate(first, last),
                 static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
@@ -2753,10 +2771,31 @@ private:
 #endif
             return sorted_seq_info{
                 true,
+                check_duplicate(first, last),
                 static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
             };
+        }
+    
+    private:
+        sorted_seq_info() = default;
+
+        sorted_seq_info(bool valid, bool has_duplicates, size_type num, value_type min, value_type max) noexcept
+            : valid(valid), has_duplicates(has_duplicates), num(num),
+              min(min), max(max) { }
+        
+        template<typename RandomAccessIterT, typename SentIterT>
+        _YAEF_ATTR_NODISCARD static bool check_duplicate(RandomAccessIterT first, SentIterT last) {
+            auto prv_iter = first;
+            auto iter = std::next(first);
+            for (; iter != last; ++iter) {
+                if (*iter == *prv_iter) {
+                    return true;
+                }
+                prv_iter = iter;
+            }
+            return false;
         }
     };
 
@@ -2766,6 +2805,7 @@ private:
         _YAEF_ASSERT(low_width > 0);
         min_ = sorted_info.min;
         max_ = sorted_info.max;
+        has_duplicates_ = sorted_info.has_duplicates;
         size_type num_elems = details::iter_distance(first, last);
 
         using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT, SentIterT>;
@@ -2829,12 +2869,15 @@ private:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator make_iter(size_type high_bit_offset, size_type index) const noexcept {
-        if (index == size()) { return end(); }
+        if (_YAEF_UNLIKELY(index == size())) { return end(); }
         details::bits64::bitset_foreach_one_cursor high_bits_cursor{high_bits_.get_bits(), high_bit_offset};
         return const_iterator{high_bits_cursor, get_low_bits(), min(), index};
     }
 
-    struct search_result { size_type num_skipped_zeros; size_type index;};
+    struct search_result { 
+        size_type  num_skipped_zeros; 
+        size_type  index;
+    };
 
     template<typename CmpElemWithTargetT>
     _YAEF_ATTR_NODISCARD search_result
@@ -2865,7 +2908,6 @@ private:
             len = half;
         }
         result = base;
-
         const size_type num_skipped_zeros = h + 1;
         return search_result{num_skipped_zeros, result};
     }
