@@ -965,9 +965,17 @@ public:
     _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept {
         _YAEF_ASSERT(index < size());
         const size_type bit_index = index * width();
-        const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
+        const size_type block_index = bit_index / BLOCK_WIDTH, 
+                        block_offset = bit_index % BLOCK_WIDTH;
 
-        if ((block_offset + width() > BLOCK_WIDTH)) {
+#if _YAEF_INTRINSICS_HAVE_AVX2
+        __m128i words = _mm_loadu_si128(reinterpret_cast<const __m128i *>(blocks_ + block_index));
+        __m128i shifted = _mm_srli_epi64(words, block_offset);
+        __m128i carry = _mm_bsrli_si128(_mm_slli_epi64(words, BLOCK_WIDTH - block_offset), 8);
+        words = _mm_or_si128(shifted, carry);
+        return _mm_cvtsi128_si64(words) & make_mask_lsb1(width());
+#else
+        if (block_offset + width() > BLOCK_WIDTH) {
             const uint32_t num_low_bits = BLOCK_WIDTH - block_offset;
             block_type low = extract_last_bits(blocks_[block_index], num_low_bits);
             block_type high = extract_first_bits(blocks_[block_index + 1], width() - num_low_bits);
@@ -975,7 +983,9 @@ public:
         } else {
             return extract_bits(blocks_[block_index], block_offset, block_offset + width());
         }
+#endif
     }
+
 
     void set_value(size_type index, value_type value) noexcept {
         _YAEF_ASSERT(index < size());
@@ -2239,10 +2249,12 @@ private:
         if (_YAEF_UNLIKELY(sample.rank_distance == 0)) {
             return sample.position;
         }
-        
+
         constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
         const size_type bits_block_index = (sample.position + 1) / BITS_BLOCK_WIDTH,
                         bits_block_offset = (sample.position + 1) % BITS_BLOCK_WIDTH;
+
+        prefetch_read(bits_.blocks() + bits_block_index);
         
         size_type result = sample.position + 1;
 
@@ -2269,8 +2281,6 @@ private:
         }
 
         const size_type num_bits_block = bits_.num_blocks();
-
-        prefetch_read(bits_.blocks() + bits_block_index + 1);
 
 #ifdef __clang__
 #   pragma clang loop unroll_count(4)
@@ -2829,8 +2839,6 @@ private:
     template<typename CmpElemWithTargetT>
     _YAEF_ATTR_NODISCARD search_result
     search_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
-        constexpr size_type LINEAR_SEARCH_THRESHOLD = 32;
-
         if (_YAEF_UNLIKELY(!cmp(min(), target))) {
             return search_result{0, 0};
         }
@@ -2848,28 +2856,22 @@ private:
 
         size_type result = end;
 
-        if (len <= LINEAR_SEARCH_THRESHOLD) {
-            for (size_type i = start; i < end; ++i) {
-                if (!cmp(get_low_bits().get_value(i), l)) {
-                    result = i;
-                    break;
-                }
-            }
-        } else {
-            size_type base = start;
-            while (len > 0) {
-                size_type half = len / 2;
-                base += (cmp(get_low_bits().get_value(base + half), l)) * (len - half);
-                len = half;
-            }
-            result = base;
+        get_low_bits().prefetch_for_read(start, end);
+
+        size_type base = start;
+        while (len > 0) {
+            size_type half = len / 2;
+            base += (cmp(get_low_bits().get_value(base + half), l)) * (len - half);
+            len = half;
         }
+        result = base;
+
         const size_type num_skipped_zeros = h + 1;
         return search_result{num_skipped_zeros, result};
     }
 
     template<typename CmpElemWithTargetT>
-    _YAEF_ATTR_NODISCARD const_iterator 
+    _YAEF_ATTR_NODISCARD size_type 
     search_index_impl(value_type target, CmpElemWithTargetT cmp) const noexcept {
         auto result = search_impl(target, cmp);
         return result.index;
