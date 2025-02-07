@@ -1438,7 +1438,7 @@ public:
         }
 #if __cplusplus >= 201703L
         return static_cast<T *>(::operator new[](sizeof(T) * n, std::align_val_t{Alignment}));
-#elif (defined(_WIN32) || defined(_WIN64)) && defined(_MSC_VER)
+#elif (defined(_WIN32) || defined(_WIN64))
         return static_cast<T *>(::_aligned_malloc(sizeof(T) * n, Alignment));
 #elif _POSIX_C_SOURCE >= 200112L
         void *ptr = nullptr;
@@ -1459,7 +1459,7 @@ public:
         }
 #if __cplusplus >= 201703L
         ::operator delete[](static_cast<void *>(p), std::align_val_t{Alignment});
-#elif (defined(_WIN32) || defined(_WIN64)) && defined(_MSC_VER)
+#elif (defined(_WIN32) || defined(_WIN64))
         ::_aligned_free(static_cast<void *>(p));
 #elif _POSIX_C_SOURCE >= 200112L
         ::free(p);
