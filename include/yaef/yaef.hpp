@@ -479,8 +479,8 @@ public:
     serializer(std::unique_ptr<writer_context> &&ctx) noexcept
         : ctx_(std::move(ctx)) { }
     
-    const writer_context &context() const { return *ctx_; }
-    writer_context &context() { return *ctx_; }
+    _YAEF_ATTR_NODISCARD const writer_context &context() const { return *ctx_; }
+    _YAEF_ATTR_NODISCARD writer_context &context() { return *ctx_; }
     
     template<typename T>
     bool write(const T &val) {
@@ -504,8 +504,8 @@ public:
     deserializer(std::unique_ptr<reader_context> &&ctx) noexcept
         : ctx_(std::move(ctx)) { }
     
-    const reader_context &context() const { return *ctx_; }
-    reader_context &context() { return *ctx_; }
+    _YAEF_ATTR_NODISCARD const reader_context &context() const { return *ctx_; }
+    _YAEF_ATTR_NODISCARD reader_context &context() { return *ctx_; }
     
     template<typename T>
     bool read(T &val) {
@@ -882,6 +882,13 @@ _YAEF_ATTR_NODISCARD inline uint64_t idiv_ceil(uint64_t lhs, uint64_t rhs) noexc
     return lhs == 0 ? 0 : (lhs - 1) / rhs + 1;
 }
 
+// `lhs` should never be 0
+_YAEF_ATTR_NODISCARD inline uint64_t idiv_ceil_nzero(uint64_t lhs, uint64_t rhs) noexcept {
+    _YAEF_ASSERT(lhs > 0);
+    _YAEF_ASSUME(lhs > 0);
+    return (lhs - 1) / rhs + 1;
+}
+
 class packed_int_view {
 public:
     using value_type = uint64_t;
@@ -985,7 +992,6 @@ public:
         }
 #endif
     }
-
 
     void set_value(size_type index, value_type value) noexcept {
         _YAEF_ASSERT(index < size());
@@ -1772,7 +1778,7 @@ public:
                 : alloc_(alloc), num_zeros_or_ones_(num_zeros_or_ones), num_scanned_(0), 
                   last_sample_(0), max_uniform_subsample_(0), max_each_one_subsample_(0) {
                 if (num_zeros_or_ones != 0) {
-                    size_t num_samples = bits64::idiv_ceil(num_zeros_or_ones, position_samples::SAMPLE_RATE) + 1;
+                    size_t num_samples = bits64::idiv_ceil_nzero(num_zeros_or_ones, position_samples::SAMPLE_RATE) + 1;
                     const uint32_t width = bits64::bit_width(num_bits);
                     samples_store_ = allocate_packed_ints(alloc, width, num_samples);
                 }
@@ -3123,7 +3129,7 @@ public:
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
-        return details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t) +
+        return details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t) +
                details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
     }
 
@@ -3134,7 +3140,7 @@ public:
     _YAEF_ATTR_NODISCARD const_iterator begin() const noexcept {
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
-        const size_type num_high_blocks = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH);
+        const size_type num_high_blocks = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH);
 
         details::bits64::bitset_foreach_one_cursor high_bits_cursor{high_bits_mem_, num_high_blocks};
         details::bits64::packed_int_view low_bits{static_cast<uint32_t>(low_width_), low_bits_mem_, size_};
@@ -3176,7 +3182,7 @@ protected:
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
-        const size_t num_high_bytes = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_t num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_t num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         if (!ser.write(size_)) { return error_code::serialize_io; }
@@ -3220,7 +3226,7 @@ protected:
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
-        const size_t num_high_bytes = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_t num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_t num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         high_bits_mem_ = reinterpret_cast<uint64_t *>(alloc_traits::allocate(get_alloc(), num_high_bytes));
@@ -3263,7 +3269,7 @@ private:
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
 
-        const size_type num_high_bytes = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_type num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_type num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         high_bits_mem_ = reinterpret_cast<uint64_t *>(alloc_traits::allocate(get_alloc(), num_high_bytes));
@@ -3282,7 +3288,7 @@ private:
 
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
-        const size_type num_high_bytes = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_type num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_type num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         high_bits_mem_ = reinterpret_cast<uint64_t *>(alloc_traits::allocate(get_alloc(), num_high_bytes));
@@ -3296,7 +3302,7 @@ private:
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
-        const size_type num_high_bytes = details::bits64::idiv_ceil(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_type num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_type num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         alloc_traits::deallocate(get_alloc(), reinterpret_cast<uint8_t *>(high_bits_mem_), num_high_bytes);

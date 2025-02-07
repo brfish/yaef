@@ -18,16 +18,10 @@ benchmark_inputs<IntT> generate_random(size_t num, IntT min = std::numeric_limit
     return benchmark_inputs<IntT>::from_datagen(min, max, num);
 }
 
-int main(int argc, char *argv[]) {
-    (void)(argc);
-    (void)(argv);
-    using int_type = uint64_t;
-    constexpr size_t NUM_INTS = 5000000;
-
-    auto inputs = generate_random<int_type>(NUM_INTS, 0, std::numeric_limits<int_type>::max() / 100);
-
+template<typename IntT>
+void run_benchmarks(const benchmark_inputs<IntT> &inputs) {
 #define REPORT_BENCHMARK(_name) \
-    { _name<int_type> b; b.run(inputs); b.report(); }
+    { _name<IntT> b; b.run(inputs); b.report(); }
 
     REPORT_BENCHMARK(binary_search_benchmark);
     REPORT_BENCHMARK(branchless_binary_search_benchmark);
@@ -35,4 +29,19 @@ int main(int argc, char *argv[]) {
     REPORT_BENCHMARK(eliasfano_sequence_benchmark);
     REPORT_BENCHMARK(stl_set_benchmark);
 #undef REPORT_BENCHMARK
+}
+
+int main(int argc, char *argv[]) {
+    (void)(argc);
+    (void)(argv);
+    using int_type = uint64_t;
+    constexpr size_t NUM_INTS = 5000000;
+
+    std::cout << "<<<<<<<<<< random >>>>>>>>>>\n";
+    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, std::numeric_limits<int_type>::max() / 100);
+    run_benchmarks(random_inputs);
+
+    std::cout << "<<<<<<<<<< dense >>>>>>>>>>\n";
+    auto dense_inputs = generate_dense<int_type>(NUM_INTS);
+    run_benchmarks(dense_inputs);
 }
