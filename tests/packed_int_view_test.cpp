@@ -28,8 +28,9 @@ TEST_CASE("packed_int_view_test", "[private]") {
 
         auto ints = yaef::details::allocate_uninit_packed_ints(alloc, width, NUM_INTS);
         YAEF_DEFER { yaef::details::deallocate_packed_ints(alloc, ints); };
-        for (size_t i = 0; i < ints.size(); ++i)
+        for (size_t i = 0; i < ints.size(); ++i) {
             ints.set_value(i, gen_result[i]);
+        }
         
         ints.prefetch_for_read(0, ints.size());
         for (size_t i = 0; i < ints.size(); ++i) {

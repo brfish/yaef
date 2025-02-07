@@ -1,5 +1,5 @@
-#ifndef __EF_BENCHMARK_BENCHMARK_HPP__
-#define __EF_BENCHMARK_BENCHMARK_HPP__
+#ifndef __EF_BENCHMARK_COMMON_HPP__
+#define __EF_BENCHMARK_COMMON_HPP__
 #pragma once
 
 #include <chrono>
@@ -52,28 +52,47 @@ struct benchmark_inputs {
     int_type               min, max;
     std::vector<int_type>  values;
     std::vector<size_type> random_indices;
+    std::vector<size_type> shuffled_indices;
     std::vector<int_type>  search_targets;
 
-    static benchmark_inputs from_values(std::vector<int_type> &&values) {
+    static benchmark_inputs from_values(std::vector<int_type> &&values, uint64_t seed) {
         const size_type num = values.size();
         const int_type min = values.front(), max = values.back();
 
-        yaef::utils::uniform_int_generator<size_type> random_indices_gen{0, num - 1};
+        yaef::utils::uniform_int_generator<size_type> random_indices_gen{0, num - 1, seed};
         auto random_indices = random_indices_gen.make_list(num);
-        yaef::utils::uniform_int_generator<int_type> search_targets_gen{min, max};
+        
+        std::mt19937_64 tmp_rng(seed);
+        std::vector<size_type> shuffled_indices(num);
+        std::iota(shuffled_indices.begin(), shuffled_indices.end(), 0);
+        std::shuffle(shuffled_indices.begin(), shuffled_indices.end(), tmp_rng);
+
+        yaef::utils::uniform_int_generator<int_type> search_targets_gen{min, max, seed};
         auto search_targets = search_targets_gen.make_list(num / 2);
         return benchmark_inputs{min, max, std::move(values), std::move(random_indices), 
-                                std::move(search_targets)};
+                                std::move(shuffled_indices), std::move(search_targets)};
+    }
+
+    static benchmark_inputs from_values(std::vector<int_type> &&values) {
+        return from_values(std::move(values), yaef::utils::make_random_seed());
+    }
+
+    static benchmark_inputs from_values(const std::vector<int_type> &values, uint64_t seed) {
+        return from_values(std::vector<int_type>{values}, seed);
     }
 
     static benchmark_inputs from_values(const std::vector<int_type> &values) {
         return from_values(std::vector<int_type>{values});
     }
 
-    static benchmark_inputs from_datagen(int_type min, int_type max, size_type num) {
-        yaef::utils::uniform_int_generator<int_type> values_gen{min, max, yaef::utils::make_random_seed()};
+    static benchmark_inputs from_datagen(int_type min, int_type max, size_type num, uint64_t seed) {
+        yaef::utils::uniform_int_generator<int_type> values_gen{min, max, seed};
         auto values = values_gen.make_sorted_list(num);
         return from_values(std::move(values));
+    }
+
+    static benchmark_inputs from_datagen(int_type min, int_type max, size_type num) {
+        return from_datagen(min, max, num, yaef::utils::make_random_seed());
     }
 };
 
@@ -197,6 +216,7 @@ private:
             std::cout << val << ' ' << suffix << '\n';
         }
     }
+
     static void report_print_result(const benchmark_result &res, timeunit unit, const char *denom_str) {
         if (res.enabled) {
             std::string suffix = std::string{timeunit_suffix(unit)} + "/" + denom_str;
