@@ -1438,20 +1438,32 @@ public:
     using is_always_equal = std::true_type;
 #endif
 public:
-    _YAEF_ATTR_NODISCARD T *allocate(size_type n) {
+    _YAEF_ATTR_NODISCARD T *allocate(size_type n) _YAEF_MAYBE_NOEXCEPT {
         if (_YAEF_UNLIKELY(n == 0)) {
             return nullptr;
         }
 #if __cplusplus >= 201703L
+#   ifdef YAEF_OPTS_NO_EXCEPTION
+        return static_cast<T *>(::operator new[](sizeof(T) * n, std::align_val_t{Alignment}, std::nothrow));
+#   else
         return static_cast<T *>(::operator new[](sizeof(T) * n, std::align_val_t{Alignment}));
+#   endif
 #elif (defined(_WIN32) || defined(_WIN64))
-        return static_cast<T *>(::_aligned_malloc(sizeof(T) * n, Alignment));
+        T *ptr = static_cast<T *>(::_aligned_malloc(sizeof(T) * n, Alignment));
+#   ifndef YAEF_OPTS_NO_EXCEPTION
+        if (_YAEF_UNLIKELY(ptr == nullptr)) {
+            throw std::bad_alloc{};
+        }
+#   endif
+        return ptr;
 #elif _POSIX_C_SOURCE >= 200112L
         void *ptr = nullptr;
         int ret = ::posix_memalign(&ptr, Alignment, sizeof(T) * n);
+#   ifndef YAEF_OPTS_NO_EXCEPTION
         if (_YAEF_UNLIKELY(ret != 0)) {
             throw std::bad_alloc{};
         }
+#   endif
         return static_cast<T *>(ptr);
 #else
 #   error "cannot find a suitable aligned allocate implementation"
