@@ -72,4 +72,11 @@ TEST_CASE("eliasfano_sequence", "[public]") {
             }
         }
     }
+
+    SECTION("check if list contains duplicates") {
+        yaef::eliasfano_sequence<uint32_t> list{1, 2, 3, 4, 5};
+        REQUIRE(!list.has_duplicates());
+        yaef::eliasfano_sequence<uint32_t> dup_list{1, 2, 2, 3, 3, 5};
+        REQUIRE(dup_list.has_duplicates());
+    }
 }

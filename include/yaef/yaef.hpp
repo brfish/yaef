@@ -1646,6 +1646,19 @@ inline error_code bit_view::deserialize(AllocT &alloc, deserializer &deser) {
 
 }
 
+template<typename RandomAccessIterT, typename SentIterT>
+_YAEF_ATTR_NODISCARD static bool check_duplicate(RandomAccessIterT first, SentIterT last) {
+    auto prv_iter = first;
+    auto iter = std::next(first);
+    for (; iter != last; ++iter) {
+        if (*iter == *prv_iter) {
+            return true;
+        }
+        prv_iter = iter;
+    }
+    return false;
+}
+
 template<typename T, typename InputIterT, typename SentIterT>
 class eliasfano_encoder_scalar_impl {
 public:
@@ -2192,31 +2205,34 @@ private:
     position_samples zero_samples_;
     position_samples one_samples_;
 
+    _YAEF_ATTR_NODISCARD const position_samples &get_samples_impl(std::true_type) const noexcept { 
+        return one_samples_; 
+    }
+
+    _YAEF_ATTR_NODISCARD const position_samples &get_samples_impl(std::false_type) const noexcept { 
+        return zero_samples_; 
+    }
+    
+    template<bool BitType>
+    _YAEF_ATTR_NODISCARD const position_samples &get_samples() const noexcept {
+        return get_samples_impl(std::integral_constant<bool, BitType>{});
+    }
+
     struct memory_access_stats {
         size_type num_popcount = 0;
         size_type num_select = 0;
 
         memory_access_stats() = default;
-        memory_access_stats(size_type p, size_type s)
+
+        memory_access_stats(size_type p, size_type s) noexcept
             : num_popcount(p), num_select(s) { }
     };
 
-    _YAEF_ATTR_NODISCARD const position_samples &get_samples(std::true_type) const noexcept { return one_samples_; }
-    _YAEF_ATTR_NODISCARD const position_samples &get_samples(std::false_type) const noexcept { return zero_samples_; }
+    // !!!(dev-only) this method is used to count the number of memory accesses 
+    // and popcounts/select_in_word performed during a `select` operation
     template<bool BitType>
-    _YAEF_ATTR_NODISCARD const position_samples &get_samples() const noexcept {
-        return get_samples(std::integral_constant<bool, BitType>{});
-    }
-
-    template<bool BitType>
-    _YAEF_ATTR_NODISCARD memory_access_stats select_impl_scan_count(size_type rank) const noexcept {        
-        const position_samples &samples = [this]() {
-            if _YAEF_CXX17_CONSTEXPR (BitType) { 
-                return one_samples_; 
-            } else { 
-                return zero_samples_; 
-            }
-        }();
+    _YAEF_ATTR_NODISCARD memory_access_stats select_impl_scan_stats(size_type rank) const noexcept {        
+        const auto &samples = BitType ? one_samples_ : zero_samples_;
         
         auto find = samples.find_nearest_sample(rank);
         if (find.rank_distance == 0) {
@@ -2229,7 +2245,7 @@ private:
                         bits_block_offset = (find.position + 1) % BITS_BLOCK_WIDTH;
         const size_type num_bits_block = bits_.num_blocks();
 
-        auto bitwise_not_if_select_zero = [](bits_block_type b) {
+        auto bitwise_not_if_select_zero = [](bits_block_type b) -> bits_block_type {
             if _YAEF_CXX17_CONSTEXPR (BitType) { 
                 return b;
             } else { 
@@ -2323,13 +2339,12 @@ private:
         return result;
     }
 
-public:
-    _YAEF_ATTR_NODISCARD memory_access_stats select_one_scan_count(size_type rank) const noexcept {
-        return select_impl_scan_count<true>(rank);
+    _YAEF_ATTR_NODISCARD memory_access_stats select_one_scan_stats(size_type rank) const noexcept {
+        return select_impl_scan_stats<true>(rank);
     }
 
-    _YAEF_ATTR_NODISCARD memory_access_stats  select_zero_scan_count(size_type rank) const noexcept {
-        return select_impl_scan_count<false>(rank);
+    _YAEF_ATTR_NODISCARD memory_access_stats  select_zero_scan_stats(size_type rank) const noexcept {
+        return select_impl_scan_stats<false>(rank);
     }
 };
 
@@ -2700,8 +2715,6 @@ public:
         return iter != end() && *iter == target;
     }
 
-    _YAEF_ATTR_NODISCARD const high_bits_type &get_high_bits() const noexcept { return high_bits_; }
-
     void swap(eliasfano_list &other) 
         noexcept(alloc_traits::propagate_on_container_swap::value ||
                  alloc_traits::is_always_equal::value) {
@@ -2713,6 +2726,7 @@ public:
         swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
         std::swap(min_, other.min_);
         std::swap(max_, other.max_);
+        std::swap(has_duplicates_, other.has_duplicates_);
     }
 
     template<typename U, typename AllocU>
@@ -2777,7 +2791,7 @@ private:
 #endif
             return sorted_seq_info{
                 true,
-                check_duplicate(first, last),
+                details::check_duplicate(first, last),
                 static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
@@ -2795,7 +2809,7 @@ private:
 #endif
             return sorted_seq_info{
                 true,
-                check_duplicate(first, last),
+                details::check_duplicate(first, last),
                 static_cast<size_type>(details::iter_distance(first, last)),
                 static_cast<value_type>(*first),
                 static_cast<value_type>(*std::prev(last))
@@ -2808,19 +2822,6 @@ private:
         sorted_seq_info(bool valid, bool has_duplicates, size_type num, value_type min, value_type max) noexcept
             : valid(valid), has_duplicates(has_duplicates), num(num),
               min(min), max(max) { }
-        
-        template<typename RandomAccessIterT, typename SentIterT>
-        _YAEF_ATTR_NODISCARD static bool check_duplicate(RandomAccessIterT first, SentIterT last) {
-            auto prv_iter = first;
-            auto iter = std::next(first);
-            for (; iter != last; ++iter) {
-                if (*iter == *prv_iter) {
-                    return true;
-                }
-                prv_iter = iter;
-            }
-            return false;
-        }
     };
 
     template<typename RandomAccessIterT, typename SentIterT>
@@ -2841,6 +2842,10 @@ private:
         auto raw_high_bits = details::allocate_bits(get_alloc(), encoder.estimate_high_size_in_bits());
         encoder.unchecked_encode_high_bits(raw_high_bits.blocks());
         high_bits_ = high_bits_type{get_alloc(), raw_high_bits};
+    }
+
+    _YAEF_ATTR_NODISCARD const high_bits_type &get_high_bits() const noexcept { 
+        return high_bits_; 
     }
 
     _YAEF_ATTR_NODISCARD const low_bits_type &get_low_bits() const noexcept { 
@@ -3043,12 +3048,13 @@ public:
 public:
     eliasfano_sequence()
         : size_(0), high_bits_mem_(nullptr), low_bits_mem_(nullptr),
-          low_width_(0), num_buckets_(0) { }
+          low_width_(0), num_buckets_(0), has_duplicates_(false) { }
     
     eliasfano_sequence(const allocator_type &alloc)
         : size_(0), high_bits_mem_(nullptr), low_bits_mem_(nullptr),
           low_width_(0), num_buckets_(0),
-          min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) { }
+          min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc),
+          has_duplicates_(false) { }
     
     eliasfano_sequence(const eliasfano_sequence &other)
         : eliasfano_sequence(other, alloc_traits::select_on_container_copy_construction(other.get_alloc())) { }
@@ -3062,6 +3068,7 @@ public:
         min_max_and_alloc_.value() = details::exchange(
             other.min_max_and_alloc_.value(), std::pair<value_type, value_type>{});
         swap_alloc_impl(typename alloc_traits::propagate_on_container_swap{});
+        has_duplicates_ = details::exchange(other.has_duplicates_, false);
     }
 
     eliasfano_sequence(const eliasfano_sequence &other, const allocator_type &alloc)
@@ -3079,6 +3086,7 @@ public:
             swap_low_width_and_num_buckets_impl(other);
             min_max_and_alloc_.value() = details::exchange(
                 other.min_max_and_alloc_.value(), std::pair<value_type, value_type>{});
+            has_duplicates_ = details::exchange(other.has_duplicates_, false);
         } else {
             init_copy_impl(other);
         }
@@ -3117,6 +3125,9 @@ public:
 
     eliasfano_sequence(std::initializer_list<value_type> initlist)
         : eliasfano_sequence(initlist.begin(), initlist.end()) { }
+    
+    eliasfano_sequence(from_sorted_t, std::initializer_list<value_type> initlist)
+        : eliasfano_sequence(from_sorted, initlist.begin(), initlist.end()) { }
 
     ~eliasfano_sequence() {
         destroy_impl();
@@ -3142,6 +3153,7 @@ public:
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return size_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+    _YAEF_ATTR_NODISCARD bool has_duplicates() const noexcept { return has_duplicates_; }
 
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
@@ -3154,6 +3166,8 @@ public:
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const noexcept { return allocator_type{get_alloc()}; }
     _YAEF_ATTR_NODISCARD value_type min() const noexcept { return min_max_and_alloc_.value().first; }
     _YAEF_ATTR_NODISCARD value_type max() const noexcept { return min_max_and_alloc_.value().second; }
+    _YAEF_ATTR_NODISCARD value_type front() const noexcept { return min(); }
+    _YAEF_ATTR_NODISCARD value_type back() const noexcept { return max(); }
 
     _YAEF_ATTR_NODISCARD const_iterator begin() const noexcept {
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
@@ -3183,6 +3197,7 @@ public:
         swap_low_width_and_num_buckets_impl(other);
         std::swap(min_max_and_alloc_.value(), other.min_max_and_alloc_.value());
         swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
+        std::swap(has_duplicates_, other.has_duplicates_);
     }
 
     template<typename U, typename AllocU>
@@ -3211,6 +3226,7 @@ protected:
 
         if (!ser.write(min_max_and_alloc_.value().first)) { return error_code::serialize_io; }
         if (!ser.write(min_max_and_alloc_.value().second)) { return error_code::serialize_io; }
+        if (!ser.write(has_duplicates_)) { return error_code::serialize_io; }
 
         if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(high_bits_mem_), num_high_bytes)) {
             return error_code::serialize_io;
@@ -3240,6 +3256,7 @@ protected:
 
         if (!deser.read(min_max_and_alloc_.value().first)) { return error_code::deserialize_io; }
         if (!deser.read(min_max_and_alloc_.value().second)) { return error_code::deserialize_io; }
+        if (!deser.read(has_duplicates_)) { return error_code::deserialize_io; }
 
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
@@ -3263,12 +3280,13 @@ private:
     using data_pair = details::value_with_allocator_pair<
         std::pair<value_type, value_type>, allocator_type>;
 
-    size_type  size_;
-    uint64_t  *high_bits_mem_;
-    uint64_t  *low_bits_mem_;
+    size_type  size_ = 0;
+    uint64_t  *high_bits_mem_ = nullptr;
+    uint64_t  *low_bits_mem_ = nullptr;
     uint64_t   low_width_   : 6;
     uint64_t   num_buckets_ : 58;
     data_pair  min_max_and_alloc_;
+    bool       has_duplicates_ = false;
 
     _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const noexcept { return min_max_and_alloc_.alloc(); }
     _YAEF_ATTR_NODISCARD allocator_type &get_alloc() noexcept { return min_max_and_alloc_.alloc(); }
@@ -3282,12 +3300,14 @@ private:
         num_buckets_ = (static_cast<uint64_t>(encoder.max()) - static_cast<uint64_t>(encoder.min())) >> low_width_;
         min_max_and_alloc_.value().first = encoder.min();
         min_max_and_alloc_.value().second = encoder.max();
+        has_duplicates_ = details::check_duplicate(first, last);
 
         constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
 
-        const size_type num_high_bytes = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+        const size_type num_high_bytes = 
+            details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t);
         const size_type num_low_bytes = details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
 
         high_bits_mem_ = reinterpret_cast<uint64_t *>(alloc_traits::allocate(get_alloc(), num_high_bytes));
@@ -3303,6 +3323,7 @@ private:
         size_ = other.size_;
         low_width_ = other.low_width_;
         num_buckets_= other.num_buckets_;
+        has_duplicates_ = other.has_duplicates_;
 
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_low_bits = size_ * low_width_;
