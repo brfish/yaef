@@ -41,7 +41,12 @@ add_library(yaef::yaef ALIAS yaef)
 target_include_directories(yaef INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 if(MSVC)
-  target_compile_options(yaef INTERFACE /FAs /arch:AVX2)
+  target_compile_options(yaef INTERFACE /arch:AVX2)
+  if(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT)
+    if(NOT ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" AND "_${CMAKE_CXX_SIMULATE_ID}" STREQUAL "_MSVC"))
+      target_compile_options(yaef INTERFACE /FAs)
+    endif()
+  endif()
 else()
   target_compile_options(yaef INTERFACE -Wall -Wextra 
     -msse -msse2 -msse3 -mssse3 -msse4 -msse4a -msse4.1 -msse4.2 -mavx -mavx2 -mbmi -mbmi2)

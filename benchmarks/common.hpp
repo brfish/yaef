@@ -9,7 +9,7 @@
 
 #include "yaef/utils/int_generator.hpp"
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && !defined(__clang__) // exclude clang-cl
 #pragma optimize("", off)
 inline void dont_optimize_away(const void *) noexcept { }
 #pragma optimize("", on)
