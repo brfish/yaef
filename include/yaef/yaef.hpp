@@ -229,7 +229,7 @@
 #define YAEF_VERSION_NUM (((YAEF_VERSION_MAJOR) << 22) | ((YAEF_VERSION_MINOR) << 12) | (YAEF_VERSION_PATCH))
 #define YAEF_VERSION_STR _YAEF_STRINGIFY(_YAEF_JOIN_3(., YAEF_VERSION_MAJOR, YAEF_VERSION_MINOR, YAEF_VERSION_PATCH))
 
-#define _YAEF_VERSION_NAMESPACE _YAEF_CONCAT(v, _YAEF_JOIN_3(_, EF_VERSION_MAJOR, EF_VERSION_MINOR, EF_VERSION_PATCH))
+#define _YAEF_VERSION_NAMESPACE _YAEF_CONCAT(v, _YAEF_JOIN_3(_, YAEF_VERSION_MAJOR, YAEF_VERSION_MINOR, YAEF_VERSION_PATCH))
 
 #define _YAEF_NAMESPACE_BEGIN namespace yaef { inline namespace _YAEF_VERSION_NAMESPACE {
 #define _YAEF_NAMESPACE_END } }
@@ -2205,6 +2205,10 @@ private:
     position_samples zero_samples_;
     position_samples one_samples_;
 
+    selectable_dense_bits(bits64::bit_view bits, const position_samples &zero_samples,
+                          const position_samples &one_samples)
+        : bits_(bits), zero_samples_(zero_samples), one_samples_(one_samples) { }
+
     _YAEF_ATTR_NODISCARD const position_samples &get_samples_impl(std::true_type) const noexcept { 
         return one_samples_; 
     }
@@ -3465,7 +3469,7 @@ _YAEF_ATTR_NODISCARD inline bool operator>=(const eliasfano_sequence<T, AllocT> 
 }
 #endif
 
-template<bool IndexedBitType, typename AllocT = details::aligned_allocator<uint8_t>>
+template<bool IndexedBitType, typename AllocT = details::aligned_allocator<uint8_t, 32>>
 class eliasfano_sparse_bitmap {
     friend struct details::serialize_friend_access;
 
@@ -3501,25 +3505,28 @@ public:
     eliasfano_sparse_bitmap(const uint64_t *blocks, size_type num_bits,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
-        const size_type num_blocks = details::bits64::idiv_ceil(num_bits, sizeof(uint64_t) * CHAR_BIT);
+        constexpr size_type BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+        const size_type num_full_blocks = num_bits / BLOCK_WIDTH,
+                        num_rem_bits = num_bits % BLOCK_WIDTH;
+        const size_type num_blocks = num_full_blocks + (num_rem_bits > 0 ? 1 : 0);
+
         size_t num_indexed_bits = 0;
 
-        for (size_t i = 1; i < num_blocks; ++i) {
-            uint64_t block = blocks[i - 1];
+        for (size_t i = 0; i < num_full_blocks; ++i) {
+            uint64_t block = blocks[i];
             if _YAEF_CXX17_CONSTEXPR (!INDEXED_BIT_TYPE) {
                 block = ~block;
             }
             num_indexed_bits += details::bits64::popcount(block);
         }
         
-        // handle last block.
-        {
-            size_t rem_bits = num_bits % (sizeof(uint64_t) * CHAR_BIT);
-            uint64_t block = blocks[num_blocks - 1];
+        // handle last block if need
+        if (num_rem_bits != 0) {
+            uint64_t block = blocks[num_full_blocks];
             if _YAEF_CXX17_CONSTEXPR (!INDEXED_BIT_TYPE) {
                 block = ~block;
             }
-            block = details::bits64::extract_first_bits(block, rem_bits);
+            block = details::bits64::extract_first_bits(block, num_rem_bits);
             num_indexed_bits += details::bits64::popcount(block);
         }
 
@@ -3653,11 +3660,11 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD size_type rank_zero(size_type index) const noexcept {
-        return size() - rank_one(index);
+        return index - rank_one(index);
     }
 
     _YAEF_ATTR_NODISCARD size_type rank_zero(size_type index, bool &bit_out) const noexcept {
-        return size() - rank_one(index, bit_out);
+        return index - rank_one(index, bit_out);
     }
 
     _YAEF_ATTR_NODISCARD size_type select(size_type rank) const _YAEF_MAYBE_NOEXCEPT {
