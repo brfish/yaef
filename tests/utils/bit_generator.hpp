@@ -5,13 +5,14 @@
 #include <memory>
 #include <random>
 
-#include "yaef/utils/int_generator.hpp"
 #include "yaef/yaef.hpp"
 
-namespace yaef {
-namespace utils {
+#include "int_generator.hpp"
 
-class bit_generator {
+namespace yaef {
+namespace test_utils {
+
+class bit_generator final {
     using bits_block_type = yaef::details::bits64::bit_view::block_type;
 public:
     using value_type    = bool;
@@ -43,9 +44,11 @@ public:
         _YAEF_ATTR_NODISCARD size_type num_bits() const noexcept { return num_zeros_ + num_ones_; }
         _YAEF_ATTR_NODISCARD size_type num_zeros() const noexcept { return num_zeros_; }
         _YAEF_ATTR_NODISCARD size_type num_ones() const noexcept { return num_ones_; }
+
         _YAEF_ATTR_NODISCARD double zero_density() const noexcept { 
             return static_cast<double>(num_zeros()) / static_cast<double>(num_bits()); 
         }
+
         _YAEF_ATTR_NODISCARD double one_density() const noexcept { 
             return static_cast<double>(num_ones()) / static_cast<double>(num_bits()); 
         }
@@ -53,12 +56,14 @@ public:
         _YAEF_ATTR_NODISCARD static param by_size(size_type num_zeros, size_type num_ones) noexcept {
             return param{num_zeros, num_ones};
         }
+
         _YAEF_ATTR_NODISCARD static param by_one_density(size_type num_bits, double one_density) noexcept {
             one_density = std::min(1.0, one_density);
             size_type num_ones = static_cast<size_type>(static_cast<double>(num_bits) * one_density);
             size_type num_zeros = num_bits - num_ones;
             return by_size(num_zeros, num_ones);
         }
+
         _YAEF_ATTR_NODISCARD static param by_zero_density(size_type num_bits, double zero_density) {
             zero_density = std::min(1.0, zero_density);
             size_type num_zeros = static_cast<size_type>(static_cast<double>(num_bits) * zero_density);
@@ -97,13 +102,15 @@ public:
         if (p.num_ones() <= p.num_zeros()) {
             auto indices = indices_gen.make_set(p.num_ones());
             res.view.clear_all_bits();
-            for (size_type i = 0; i < indices.size(); ++i)
+            for (size_type i = 0; i < indices.size(); ++i) {
                 res.view.set_bit(indices[i]);
+            }
         } else {
             auto indices = indices_gen.make_set(p.num_zeros());
             res.view.set_all_bits();
-            for (size_type i = 0; i < indices.size(); ++i)
+            for (size_type i = 0; i < indices.size(); ++i) {
                 res.view.clear_bit(indices[i]);
+            }
         }
         return res;
     }
@@ -114,13 +121,15 @@ public:
 
         auto one_indices = indices_gen.make_sorted_set(p.num_ones());
         res.view.clear_all_bits();
-        for (size_type i = 0; i < one_indices.size(); ++i)
+        for (size_type i = 0; i < one_indices.size(); ++i) {
             res.view.set_bit(one_indices[i]);
+        }
         std::vector<size_type> zero_indices;
         zero_indices.resize(p.num_zeros());
         for (size_type i = 0, p = 0; i < res.view.size(); ++i) {
-            if (res.view.get_bit(i) == false)
+            if (res.view.get_bit(i) == false) {
                 zero_indices[p++] = i;
+            }
         }
         return result_with_both_indices{std::move(res.mem), res.view, 
             std::move(zero_indices), std::move(one_indices)};
@@ -132,8 +141,9 @@ public:
 
         auto indices = indices_gen.make_sorted_set(p.num_ones());
         res.view.clear_all_bits();
-        for (size_type i = 0; i < indices.size(); ++i)
+        for (size_type i = 0; i < indices.size(); ++i) {
             res.view.set_bit(indices[i]);
+        }
         return result_with_one_indices{std::move(res.mem), res.view, std::move(indices)};
     }
 
@@ -143,8 +153,9 @@ public:
 
         auto indices = indices_gen.make_sorted_set(p.num_zeros());
         res.view.set_all_bits();
-        for (size_type i = 0; i < indices.size(); ++i)
+        for (size_type i = 0; i < indices.size(); ++i) {
             res.view.clear_bit(indices[i]);
+        }
         return result_with_zero_indices{std::move(res.mem), res.view, std::move(indices)};
     }
 

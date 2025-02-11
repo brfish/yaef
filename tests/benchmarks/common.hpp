@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <ratio>
 
-#include "yaef/utils/int_generator.hpp"
+#include "utils/int_generator.hpp"
 
 #if defined(_MSC_VER) && !defined(__clang__) // exclude clang-cl
 #pragma optimize("", off)
@@ -59,7 +59,7 @@ struct benchmark_inputs {
         const size_type num = values.size();
         const int_type min = values.front(), max = values.back();
 
-        yaef::utils::uniform_int_generator<size_type> random_indices_gen{0, num - 1, seed};
+        yaef::test_utils::uniform_int_generator<size_type> random_indices_gen{0, num - 1, seed};
         auto random_indices = random_indices_gen.make_list(num);
         
         std::mt19937_64 tmp_rng(seed);
@@ -67,14 +67,14 @@ struct benchmark_inputs {
         std::iota(shuffled_indices.begin(), shuffled_indices.end(), 0);
         std::shuffle(shuffled_indices.begin(), shuffled_indices.end(), tmp_rng);
 
-        yaef::utils::uniform_int_generator<int_type> search_targets_gen{min, max, seed};
+        yaef::test_utils::uniform_int_generator<int_type> search_targets_gen{min, max, seed};
         auto search_targets = search_targets_gen.make_list(num / 2);
         return benchmark_inputs{min, max, std::move(values), std::move(random_indices), 
                                 std::move(shuffled_indices), std::move(search_targets)};
     }
 
     static benchmark_inputs from_values(std::vector<int_type> &&values) {
-        return from_values(std::move(values), yaef::utils::make_random_seed());
+        return from_values(std::move(values), yaef::test_utils::make_random_seed());
     }
 
     static benchmark_inputs from_values(const std::vector<int_type> &values, uint64_t seed) {
@@ -86,13 +86,13 @@ struct benchmark_inputs {
     }
 
     static benchmark_inputs from_datagen(int_type min, int_type max, size_type num, uint64_t seed) {
-        yaef::utils::uniform_int_generator<int_type> values_gen{min, max, seed};
+        yaef::test_utils::uniform_int_generator<int_type> values_gen{min, max, seed};
         auto values = values_gen.make_sorted_list(num);
         return from_values(std::move(values));
     }
 
     static benchmark_inputs from_datagen(int_type min, int_type max, size_type num) {
-        return from_datagen(min, max, num, yaef::utils::make_random_seed());
+        return from_datagen(min, max, num, yaef::test_utils::make_random_seed());
     }
 };
 

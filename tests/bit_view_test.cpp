@@ -2,9 +2,10 @@
 
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/bit_generator.hpp"
-#include "yaef/utils/defer_guard.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/bit_generator.hpp"
+#include "utils/defer_guard.hpp"
 
 TEST_CASE("bit_view_test", "[private]") {
     using yaef::details::bits64::bit_view;
@@ -17,14 +18,15 @@ TEST_CASE("bit_view_test", "[private]") {
         REQUIRE(bits.size() == NUM_BITS);
         REQUIRE_NOTHROW(yaef::details::deallocate_bits(alloc, bits));
     }
+
     SECTION("random access (get/set)") {
         constexpr size_t NUM_BITS = 10000;
         
-        yaef::utils::bit_generator gen;
+        yaef::test_utils::bit_generator gen;
         auto gen_result = gen.make_uninit_bits(NUM_BITS);
         gen_result.view.clear_all_bits();
         
-        yaef::utils::uniform_int_generator<size_t> indices_gen{0, NUM_BITS - 1};
+        yaef::test_utils::uniform_int_generator<size_t> indices_gen{0, NUM_BITS - 1};
         auto indices = indices_gen.make_list(NUM_BITS / 2);
         for (auto index : indices) {
             gen_result.view.set_bit(index);
@@ -38,12 +40,13 @@ TEST_CASE("bit_view_test", "[private]") {
             REQUIRE(actual_bit == expected_bit);
         }
     }
+
     SECTION("duplicate") {
         constexpr size_t NUM_BITS = 10000;
         
-        yaef::utils::bit_generator gen;
+        yaef::test_utils::bit_generator gen;
         auto gen_result = gen.make_bits_with_one_indices(
-            yaef::utils::bit_generator::param::by_one_density(NUM_BITS, 0.5));
+            yaef::test_utils::bit_generator::param::by_one_density(NUM_BITS, 0.5));
 
         std::allocator<uint8_t> alloc;
         auto copy = yaef::details::duplicate_bits(alloc, gen_result.view);
@@ -53,12 +56,13 @@ TEST_CASE("bit_view_test", "[private]") {
         for (size_t i = 0; i < NUM_BITS; ++i)
             REQUIRE(gen_result.view.get_bit(i) == copy.get_bit(i));
     }
+
     SECTION("eqaul") {
         constexpr size_t NUM_BITS = 10000;
         
-        yaef::utils::bit_generator gen;
+        yaef::test_utils::bit_generator gen;
         auto gen_result = gen.make_bits_with_one_indices(
-            yaef::utils::bit_generator::param::by_one_density(NUM_BITS, 0.5));
+            yaef::test_utils::bit_generator::param::by_one_density(NUM_BITS, 0.5));
         REQUIRE(gen_result.view == gen_result.view);
 
         std::allocator<uint8_t> alloc;
@@ -69,12 +73,13 @@ TEST_CASE("bit_view_test", "[private]") {
         copy.clear_bit(gen_result.one_indices.front());
         REQUIRE(gen_result.view != copy);
     }
+
     SECTION("set/clear all bits") {
         using bits_block_type = bit_view::block_type;
         constexpr uint32_t BITS_BLOCK_WIDTH = bit_view::BLOCK_WIDTH;
         constexpr size_t NUM_BITS = 10000;
 
-        yaef::utils::bit_generator gen;
+        yaef::test_utils::bit_generator gen;
         auto gen_result = gen.make_uninit_bits(NUM_BITS);
         const size_t num_blocks = gen_result.view.num_blocks();
         const bits_block_type *blocks = gen_result.view.blocks();

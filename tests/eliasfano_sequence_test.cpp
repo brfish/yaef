@@ -1,12 +1,13 @@
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/int_generator.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/int_generator.hpp"
 
 TEST_CASE("eliasfano_sequence", "[public]") {
     SECTION("construct") {
         using int_type = uint16_t;
-        yaef::utils::uniform_int_generator<int_type> gen;
+        yaef::test_utils::uniform_int_generator<int_type> gen;
         auto ints = gen.make_sorted_list(50000);
 
         yaef::eliasfano_sequence<int_type> seq{yaef::from_sorted, ints.begin(), ints.end()};
@@ -17,7 +18,7 @@ TEST_CASE("eliasfano_sequence", "[public]") {
 
     SECTION("forward traverse") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen;
+        yaef::test_utils::uniform_int_generator<int_type> gen;
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_sequence<int_type> seq{yaef::from_sorted, ints.begin(), ints.end()};
@@ -30,7 +31,7 @@ TEST_CASE("eliasfano_sequence", "[public]") {
 
     SECTION("serialize/deserialize to memory buffer") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen;
+        yaef::test_utils::uniform_int_generator<int_type> gen;
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_sequence<int_type> seq{yaef::from_sorted, ints.begin(), ints.end()};
@@ -54,7 +55,7 @@ TEST_CASE("eliasfano_sequence", "[public]") {
 
     SECTION("serialize/deserialize to file") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen;
+        yaef::test_utils::uniform_int_generator<int_type> gen;
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_sequence<int_type> seq{yaef::from_sorted, ints.begin(), ints.end()};

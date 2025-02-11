@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
 set(YAEF_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
+set(YAEF_TESTS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+set(YAEF_BENCHMARKS_DIR "${YAEF_TEST_DIR}/benchmarks")
 
 # normal library options
 option(YAEF_OPTS_ENABLE_TESTS "enable unit tests" OFF)
@@ -61,5 +63,5 @@ if(YAEF_OPTS_ENABLE_TESTS)
 endif()
 
 if(YAEF_OPTS_ENABLE_BENCHMARKS)
-  add_subdirectory(benchmarks)
+  add_subdirectory(tests/benchmarks)
 endif()

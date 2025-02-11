@@ -1,7 +1,8 @@
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/bit_generator.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/bit_generator.hpp"
 
 TEST_CASE("bitset_foreach_test", "[private]") {
     using yaef::details::bits64::bitset_foreach_one_cursor;
@@ -10,8 +11,8 @@ TEST_CASE("bitset_foreach_test", "[private]") {
     constexpr size_t NUM_ONES  = 500000;
     constexpr size_t NUM_ZEROS = NUM_BITS - NUM_ONES;
 
-    using bit_gen_param = yaef::utils::bit_generator::param;
-    yaef::utils::bit_generator gen;
+    using bit_gen_param = yaef::test_utils::bit_generator::param;
+    yaef::test_utils::bit_generator gen;
     auto gen_res = gen.make_bits(bit_gen_param::by_size(NUM_ZEROS, NUM_ONES));
     const auto &bits = gen_res.view;
 

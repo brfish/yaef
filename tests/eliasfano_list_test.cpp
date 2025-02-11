@@ -1,8 +1,9 @@
 #include "catch2/generators/catch_generators.hpp"
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/int_generator.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/int_generator.hpp"
 
 _YAEF_STATIC_ASSERT_NOMSG(std::is_same<yaef::eliasfano_list<uint32_t>::size_type, size_t>::value);
 _YAEF_STATIC_ASSERT_NOMSG(std::is_same<yaef::eliasfano_list<uint32_t>::difference_type, ptrdiff_t>::value);
@@ -15,9 +16,10 @@ _YAEF_STATIC_ASSERT_NOMSG(std::is_move_assignable<yaef::eliasfano_list<uint32_t>
 TEST_CASE("eliasfano_list_test", "[public]") {
     SECTION("construct from sorted unsigned integer list and random access") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min(), 
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
@@ -32,9 +34,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
     SECTION("construct from sorted signed integer list and random access") {
         using int_type = int32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min(), 
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
@@ -51,9 +54,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         const size_t num_ints = GENERATE(1, 2, 5, 64, 65, 128, 4095);
 
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min(), 
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(num_ints);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
@@ -68,9 +72,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
     SECTION("lower_bound and upper_bound") {
         using int_type = int32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min() + 10,
-                                                         std::numeric_limits<int_type>::max() - 10,
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min() + 10,
+            std::numeric_limits<int_type>::max() - 10,
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(100000);
         
         yaef::eliasfano_list<int_type> list{yaef::from_sorted, ints.begin(), ints.end()};
@@ -118,7 +123,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         test_upper_bound(list.max() + 2);
 
         for (size_t i = 0; i < 1000; ++i) {
-            auto target = yaef::utils::random<int_type>(gen.min(), gen.max());
+            auto target = yaef::test_utils::random<int_type>(gen.min(), gen.max());
             test_lower_bound(target);
             test_upper_bound(target);
         }
@@ -126,9 +131,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
     SECTION("iterate") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<uint32_t> gen{std::numeric_limits<int_type>::min(),
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{
+            std::numeric_limits<int_type>::min(),
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(1000000 / 2);
         yaef::eliasfano_list<int_type> list{yaef::from_sorted, ints.begin(), ints.end()};
 
@@ -145,9 +151,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
     SECTION("serialize/deserialize to memory buffer") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min(), 
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());
@@ -171,9 +178,10 @@ TEST_CASE("eliasfano_list_test", "[public]") {
 
     SECTION("serialize/deserialize to file") {
         using int_type = uint32_t;
-        yaef::utils::uniform_int_generator<int_type> gen{std::numeric_limits<int_type>::min(), 
-                                                         std::numeric_limits<int_type>::max(),
-                                                         yaef::utils::make_random_seed()};
+        yaef::test_utils::uniform_int_generator<int_type> gen{
+            std::numeric_limits<int_type>::min(), 
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
         auto ints = gen.make_sorted_list(80000);
 
         yaef::eliasfano_list<int_type> list(yaef::from_sorted, ints.begin(), ints.end());

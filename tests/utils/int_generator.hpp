@@ -8,10 +8,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "yaef/utils/random.hpp"
+#include "random.hpp"
 
 namespace yaef {
-namespace utils {
+namespace test_utils {
 
 template<typename IntT>
 class int_generator {
@@ -22,6 +22,8 @@ public:
 public:
     int_generator(uint64_t seed = 114514)
         : rng_(seed), seed_(seed) { }
+
+    virtual ~int_generator() = default;
 
     virtual value_type min() const = 0;
     virtual value_type max() const = 0;
@@ -62,8 +64,9 @@ public:
     std::vector<value_type> make_list(size_type num) override {
         std::vector<value_type> result;
         result.resize(num);
-        for (size_type i = 0; i < result.size(); ++i)
+        for (size_type i = 0; i < result.size(); ++i) {
             result[i] = do_next_value(this->rng_);
+        }
         return result;
     }
 
@@ -111,7 +114,7 @@ public:
     value_type max() const override { return dist_impl_.b(); }
 
 private:
-    using dist_impl_type = util_details::uniform_dist_type<value_type>;
+    using dist_impl_type = test_utils::details::uniform_dist_type<value_type>;
     dist_impl_type dist_impl_;
 
     value_type do_next_value(random_engine &rng) override {
@@ -156,7 +159,7 @@ protected:
     }
 
 private:
-    using dist_type = util_details::discrete_dist_type<value_type>;
+    using dist_type = test_utils::details::discrete_dist_type<value_type>;
 
     dist_type dist_impl_;
     value_type min_, max_;

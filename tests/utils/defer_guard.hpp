@@ -8,7 +8,7 @@
 #include "yaef/yaef.hpp"
 
 namespace yaef {
-namespace utils {
+namespace test_utils {
 
 template<typename CallbackT>
 class defer_guard final {
@@ -27,8 +27,7 @@ public:
         : active_(true), callback_(std::forward<F>(f)) { }
 
     ~defer_guard() {
-        if (active_)
-            callback_();
+        if (active_) { callback_(); }
     }
 
 private:
@@ -36,9 +35,9 @@ private:
     callback_type callback_;
 };
 
-namespace util_details {
+namespace details {
 
-struct defer_guard_builder {
+struct defer_guard_builder final {
     template<typename CallbackT>
     defer_guard<std::decay_t<CallbackT>> operator%(CallbackT &&callback) {
         return defer_guard<std::decay_t<CallbackT>>{std::forward<CallbackT>(callback)};
@@ -50,7 +49,7 @@ struct defer_guard_builder {
 #define _YAEF_DEFER_IMPL_NAME() _YAEF_CONCAT(__ef_anonymous_defer_guard_, __LINE__)
 
 #define YAEF_DEFER auto _YAEF_DEFER_IMPL_NAME() = \
-    ::yaef::utils::util_details::defer_guard_builder{} % [&]() -> void
+    ::yaef::test_utils::details::defer_guard_builder{} % [&]() -> void
 
 } // namespace utils
 } // namespace yaef

@@ -1,7 +1,8 @@
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/int_generator.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/int_generator.hpp"
 
 #if 0
 template<typename T>

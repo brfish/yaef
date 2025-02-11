@@ -7,20 +7,20 @@
 #include <type_traits>
 
 namespace yaef {
-namespace utils {
+namespace test_utils {
 
 [[nodiscard]] inline uint64_t make_random_seed() {
     static thread_local std::random_device rd;
     return rd();
 }
 
-namespace util_details {
+namespace details{
 
 template<typename T>
 using integer_dist_is_well_defined = std::integral_constant<bool,
-    std::is_same<typename std::make_unsigned<T>::type, unsigned short>::value &&
-    std::is_same<typename std::make_unsigned<T>::type, unsigned int>::value &&
-    std::is_same<typename std::make_unsigned<T>::type, unsigned long>::value &&
+    std::is_same<typename std::make_unsigned<T>::type, unsigned short>::value ||
+    std::is_same<typename std::make_unsigned<T>::type, unsigned int>::value ||
+    std::is_same<typename std::make_unsigned<T>::type, unsigned long>::value ||
     std::is_same<typename std::make_unsigned<T>::type, unsigned long long>::value
 >;
 
@@ -43,7 +43,7 @@ using discrete_dist_type = typename std::conditional<integer_dist_is_well_define
 template<typename T>
 inline T random(T min = std::numeric_limits<T>::min(),
                 T max = std::numeric_limits<T>::max()) {
-    using dist_impl_type = util_details::uniform_dist_type<T>;
+    using dist_impl_type = test_utils::details::uniform_dist_type<T>;
     using dist_result_type = typename dist_impl_type::result_type;
     using param = typename dist_impl_type::param_type;
     
@@ -56,7 +56,7 @@ inline T random(T min = std::numeric_limits<T>::min(),
 template<typename T>
 inline T safe_random(T min = std::numeric_limits<T>::min(),
                      T max = std::numeric_limits<T>::max()) {
-    using dist_impl_type = util_details::uniform_dist_type<T>;
+    using dist_impl_type = test_utils::details::uniform_dist_type<T>;
     using dist_result_type = typename dist_impl_type::result_type;
 
     static thread_local std::mt19937_64 rng{make_random_seed()};

@@ -1,8 +1,9 @@
 #include "catch2/catch_test_macros.hpp"
 
-#include "yaef/utils/int_generator.hpp"
-#include "yaef/utils/defer_guard.hpp"
 #include "yaef/yaef.hpp"
+
+#include "utils/int_generator.hpp"
+#include "utils/defer_guard.hpp"
 
 TEST_CASE("packed_int_view_test", "[private]") {
     using yaef::details::bits64::packed_int_view;
@@ -22,7 +23,7 @@ TEST_CASE("packed_int_view_test", "[private]") {
         constexpr uint32_t MIN_INT = 10;
         constexpr uint32_t MAX_INT = 100000;
 
-        yaef::utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
         auto gen_result = gen.make_list(NUM_INTS);
         const uint32_t width = yaef::details::bits64::bit_width(*std::max_element(gen_result.begin(), gen_result.end()));
 
@@ -45,14 +46,15 @@ TEST_CASE("packed_int_view_test", "[private]") {
         constexpr uint32_t MIN_INT = 10;
         constexpr uint32_t MAX_INT = 100000;
 
-        yaef::utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
         auto gen_result = gen.make_list(NUM_INTS);
         const uint32_t width = yaef::details::bits64::bit_width(*std::max_element(gen_result.begin(), gen_result.end()));
 
         auto ints = yaef::details::allocate_uninit_packed_ints(alloc, width, NUM_INTS);
         YAEF_DEFER { yaef::details::deallocate_packed_ints(alloc, ints); };
-        for (size_t i = 0; i < ints.size(); ++i)
+        for (size_t i = 0; i < ints.size(); ++i) {
             ints.set_value(i, gen_result[i]);
+        }
 
         auto copy = yaef::details::duplicate_packed_ints(alloc, ints);
         YAEF_DEFER { yaef::details::deallocate_packed_ints(alloc, copy); };
@@ -67,14 +69,15 @@ TEST_CASE("packed_int_view_test", "[private]") {
         constexpr uint32_t MIN_INT = 10;
         constexpr uint32_t MAX_INT = 100000;
 
-        yaef::utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
         auto gen_result = gen.make_list(NUM_INTS);
         const uint32_t width = yaef::details::bits64::bit_width(*std::max_element(gen_result.begin(), gen_result.end()));
 
         auto ints = yaef::details::allocate_uninit_packed_ints(alloc, width, NUM_INTS);
         YAEF_DEFER { yaef::details::deallocate_packed_ints(alloc, ints); };
-        for (size_t i = 0; i < ints.size(); ++i)
+        for (size_t i = 0; i < ints.size(); ++i) {
             ints.set_value(i, gen_result[i]);
+        }
         REQUIRE(ints == ints);
 
         auto copy = yaef::details::duplicate_packed_ints(alloc, ints);
@@ -99,12 +102,14 @@ TEST_CASE("packed_int_view_test", "[private]") {
         const auto *blocks = ints.blocks();
 
         ints.clear_all_bits();
-        for (size_t i = 0; i < num_blocks; ++i)
+        for (size_t i = 0; i < num_blocks; ++i) {
             REQUIRE(blocks[i] == 0);
+        }
 
         ints.set_all_bits();
-        for (size_t i = 0; i < num_blocks - 1; ++i)
+        for (size_t i = 0; i < num_blocks - 1; ++i) {
             REQUIRE(blocks[i] == std::numeric_limits<block_type>::max());
+        }
         const size_t num_residual_bits = NUM_INTS * VAL_WIDTH - (num_blocks - 1) * BLOCK_WIDTH;
         REQUIRE(blocks[num_blocks - 1] == yaef::details::bits64::make_mask_lsb1(num_residual_bits));
     }
