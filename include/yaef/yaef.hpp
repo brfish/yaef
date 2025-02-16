@@ -68,7 +68,7 @@
 
 #if __cplusplus >= 201703L
 #   include <filesystem>
-#   if __cpp_lib_filesystem	>= 201703L
+#   if __cpp_lib_filesystem >= 201703L
 #       define _YAEF_USE_STL_FILESYSTEM 1
 #       include <fstream>
 #   endif
@@ -305,22 +305,21 @@ _YAEF_ATTR_FORCEINLINE void prefetch_write(void *p) noexcept {
 }
 
 #if !_YAEF_USE_CXX_CONCEPTS
-
-#if __cpp_lib_void_t >= 201411L
+#   if __cpp_lib_void_t >= 201411L
 template<typename ...Ts>
 using void_t = std::void_t<Ts...>;
-#else
+#   else
 template<typename ...>
 using void_t = void;
-#endif
+#   endif
 
-#if __cpp_lib_remove_cvref >= 201711L
+#   if __cpp_lib_remove_cvref >= 201711L
 template<typename T>
 using remove_cvref = std::remove_cvref<T>;
-#else
+#   else
 template<typename T>
 using remove_cvref = std::remove_cv<typename std::remove_reference<T>::type>;
-#endif
+#   endif
 
 template<typename T, typename = void>
 struct is_bidirectional_iter : std::false_type { };
@@ -4135,6 +4134,13 @@ inline error_code serialize_to_stream(const T &x, std::ostream &stream) {
     return details::serialize_friend_access::serialize(x, ser);
 }
 
+#if _YAEF_USE_STL_SPAN
+template<typename T>
+inline error_code serialize_to_buf(const T &x, std::span<uint8_t> buf) {
+    return serialize_to_buf(x, buf.data(), buf.size());
+}
+#endif
+
 #if _YAEF_USE_STL_FILESYSTEM
 template<typename T>
 inline error_code serialize_to_file(const T &x, const std::filesystem::path &path, bool overwrite) {
@@ -4178,6 +4184,13 @@ inline error_code deserialize_from_stream(T &x, std::istream &stream) {
     auto deser = details::deserializer{details::make_unique_obj<details::istream_reader_context>(stream)};
     return details::serialize_friend_access::deserialize(x, deser);
 }
+
+#if _YAEF_USE_STL_SPAN
+template<typename T>
+inline error_code deserialize_from_buf(const T &x, std::span<const uint8_t> buf) {
+    return deserialize_from_buf(x, buf.data(), buf.size());
+}
+#endif
 
 #if _YAEF_USE_STL_FILESYSTEM
 template<typename T>
