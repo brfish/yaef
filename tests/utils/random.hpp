@@ -41,8 +41,7 @@ using discrete_dist_type = typename std::conditional<integer_dist_is_well_define
 }
 
 template<typename T>
-inline T random(T min = std::numeric_limits<T>::min(),
-                T max = std::numeric_limits<T>::max()) {
+inline T random(T min = std::numeric_limits<T>::min(), T max = std::numeric_limits<T>::max()) {
     using dist_impl_type = test_utils::details::uniform_dist_type<T>;
     using dist_result_type = typename dist_impl_type::result_type;
     using param = typename dist_impl_type::param_type;
@@ -54,17 +53,15 @@ inline T random(T min = std::numeric_limits<T>::min(),
 }
 
 template<typename T>
-inline T safe_random(T min = std::numeric_limits<T>::min(),
-                     T max = std::numeric_limits<T>::max()) {
+inline T safe_random(T min = std::numeric_limits<T>::min(), T max = std::numeric_limits<T>::max()) {
     using dist_impl_type = test_utils::details::uniform_dist_type<T>;
     using dist_result_type = typename dist_impl_type::result_type;
+    using param = typename dist_impl_type::param_type;
 
     static thread_local std::mt19937_64 rng{make_random_seed()};
     static thread_local dist_impl_type dist;
-    return dist(rng, typename dist_impl_type::param_type{
-        static_cast<dist_result_type>(min), 
-        static_cast<dist_result_type>(max)}
-    );
+    return dist(rng, param{static_cast<dist_result_type>(min), 
+                           static_cast<dist_result_type>(max)});
 }
 
 } // namespace utils

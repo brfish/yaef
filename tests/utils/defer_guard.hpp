@@ -19,8 +19,10 @@ public:
     defer_guard(const defer_guard &) = delete;
 
     defer_guard(defer_guard &&other)
-        : active_(std::exchange(other.active_, false)),
-          callback_(std::move(other.callback_)) { }
+        : active_(other.active_),
+          callback_(std::move(other.callback_)) {
+        other.active_ = false;
+    }
 
     template<typename F = callback_type>
     defer_guard(F &&f)
@@ -39,8 +41,8 @@ namespace details {
 
 struct defer_guard_builder final {
     template<typename CallbackT>
-    defer_guard<std::decay_t<CallbackT>> operator%(CallbackT &&callback) {
-        return defer_guard<std::decay_t<CallbackT>>{std::forward<CallbackT>(callback)};
+    defer_guard<typename std::decay<CallbackT>::type> operator%(CallbackT &&callback) {
+        return defer_guard<typename std::decay<CallbackT>::type>{std::forward<CallbackT>(callback)};
     }
 };
 

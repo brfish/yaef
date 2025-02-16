@@ -19,6 +19,7 @@ public:
     using value_type    = IntT;
     using size_type     = size_t;
     using random_engine = std::mt19937_64;
+
 public:
     int_generator(uint64_t seed = 114514)
         : rng_(seed), seed_(seed) { }
