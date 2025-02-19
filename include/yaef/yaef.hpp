@@ -192,10 +192,11 @@
 #endif
 
 #ifdef NDEBUG
-#   define _YAEF_ASSERT(_expr)
+#   define _YAEF_ASSERT(...)
 #else
-#   define _YAEF_ASSERT(_expr) do { if (!(_expr)) { \
-    ::yaef::details::raise_assertion(__FILE__, __LINE__, #_expr); _YAEF_DEBUGBREAK(); } } while (false)
+#   define _YAEF_ASSERT(...) do { if (!static_cast<bool>(__VA_ARGS__)) { \
+        ::yaef::details::raise_assertion(__FILE__, __LINE__, _YAEF_STRINGIFY(__VA_ARGS__)); \
+        _YAEF_DEBUGBREAK(); } } while (false)
 #endif
 
 #ifdef __BMI2__
@@ -948,8 +949,9 @@ public:
             set_all_bits();
             return;
         }
-        for (size_type i = 0; i < size(); ++i)
+        for (size_type i = 0; i < size(); ++i) {
             set_value(i, value);
+        }
     }
 
     void prefetch_for_read(size_type first, size_type last) const noexcept {
@@ -1206,6 +1208,7 @@ private:
         const size_type block_index = index / BLOCK_WIDTH, block_offset = index % BLOCK_WIDTH;
         return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
     }
+
     _YAEF_ATTR_NODISCARD std::pair<block_type *, uint32_t> locate_block(size_type index) noexcept {
         const size_type block_index = index / BLOCK_WIDTH, block_offset = index % BLOCK_WIDTH;
         return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
@@ -1243,6 +1246,7 @@ public:
     _YAEF_ATTR_NODISCARD double one_density() const noexcept {
         return static_cast<double>(num_ones()) / static_cast<double>(size());
     }
+    
     _YAEF_ATTR_NODISCARD double zero_density() const noexcept {
         return static_cast<double>(num_zeros()) / static_cast<double>(size());
     }
@@ -1649,8 +1653,8 @@ inline error_code bit_view::deserialize(AllocT &alloc, deserializer &deser) {
 
 }
 
-template<typename RandomAccessIterT, typename SentIterT>
-_YAEF_ATTR_NODISCARD static bool check_duplicate(RandomAccessIterT first, SentIterT last) {
+template<typename ForwardIterT, typename SentIterT>
+_YAEF_ATTR_NODISCARD static bool check_duplicate(ForwardIterT first, SentIterT last) {
     auto prv_iter = first;
     auto iter = std::next(first);
     for (; iter != last; ++iter) {
@@ -1687,7 +1691,8 @@ public:
 #if _YAEF_USE_CXX_CONCEPTS
     template<std::bidirectional_iterator IterT = InputIterT>
 #else
-    template<typename IterT = InputIterT, typename = typename std::enable_if<is_bidirectional_iter<IterT>::value>::type>
+    template<typename IterT = InputIterT, 
+             typename = typename std::enable_if<is_bidirectional_iter<IterT>::value>::type>
 #endif
     eliasfano_encoder_scalar_impl(IterT first, IterT last, size_type num)
         : first_(first), last_(last), size_(num),
