@@ -14,6 +14,14 @@ _YAEF_STATIC_ASSERT_NOMSG(std::is_copy_assignable<yaef::eliasfano_list<uint32_t>
 _YAEF_STATIC_ASSERT_NOMSG(std::is_move_assignable<yaef::eliasfano_list<uint32_t>>::value);
 
 TEST_CASE("eliasfano_list_test", "[public]") {
+    SECTION("construct from empty lists") {
+        using int_type = uint32_t;
+
+        std::vector<int_type> empty_list;
+        yaef::eliasfano_list<int_type> list{empty_list.begin(), empty_list.end()};
+        REQUIRE(list.empty());
+    }
+
     SECTION("construct from sorted unsigned integer list and random access") {
         using int_type = uint32_t;
         yaef::test_utils::uniform_int_generator<int_type> gen{

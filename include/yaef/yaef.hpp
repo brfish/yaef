@@ -1666,14 +1666,14 @@ public:
 
 public:
     eliasfano_encoder_scalar_impl(InputIterT first, SentIterT last, size_type num,
-                                  value_type min, value_type max, uint32_t low_width)
+                                  value_type min, value_type max, uint32_t low_width) noexcept
         : first_(first), last_(last), size_(num), 
           min_(min), max_(max), low_width_(low_width) {
         _YAEF_ASSERT(low_width_ > 0 && low_width_ <= 64);
     }
     
     eliasfano_encoder_scalar_impl(InputIterT first, InputIterT last, size_type num, 
-                                  value_type min, value_type max)
+                                  value_type min, value_type max) noexcept
         : first_(first), last_(last), size_(num), 
           min_(min), max_(max), low_width_(0) {
         const uint64_t u = to_stored_value(max_);
@@ -2550,6 +2550,10 @@ public:
         if (!sorted_info.valid) {
             _YAEF_THROW(std::invalid_argument{"eliasfano_list::eliasfano_list: the input data is not sorted"});
         }
+        if (sorted_info.num == 0) {
+            return;
+        }
+
         auto u = static_cast<unsigned_value_type>(sorted_info.max) - 
                  static_cast<unsigned_value_type>(sorted_info.min);
         const uint32_t low_width = details::bits64::bit_width(u / sorted_info.num);
@@ -2781,6 +2785,10 @@ private:
         create(RandomAccessIterT first, SentIterT last) {
             if (first > last) {
                 return sorted_seq_info{};
+            }
+            if (first == last) {
+                return sorted_seq_info{true, false, 0, std::numeric_limits<value_type>::max(), 
+                                       std::numeric_limits<value_type>::min()};
             }
 
 #if _YAEF_USE_STL_RANGES_ALG
@@ -3104,7 +3112,12 @@ public:
     eliasfano_sequence(from_sorted_t, RandomAccessIterT first, RandomAccessIterT last, 
                        const allocator_type &alloc = allocator_type{})
         : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
-        unchecked_init(first, last);
+        if (first > last) {
+            _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the iterators are invalid"});
+        }
+        if (first != last) {
+            unchecked_init(first, last);
+        }       
     }
 
 #if _YAEF_USE_CXX_CONCEPTS
@@ -3119,11 +3132,17 @@ public:
     eliasfano_sequence(RandomAccessIterT first, SentIterT last,
                        const allocator_type &alloc = allocator_type{})
         : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
-        if (!std::is_sorted(first, last)) {
-            _YAEF_THROW(std::invalid_argument{
-                "eliasfano_sequence::eliasfano_sequence: the input data is not sorted"});
+        if (first > last) {
+            _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the iterators are invalid"});
         }
-        unchecked_init(first, last);
+
+        if (!std::is_sorted(first, last)) {
+            _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the input data is not sorted"});
+        }
+
+        if (first != last) {
+            unchecked_init(first, last);
+        }
     }
 
     eliasfano_sequence(std::initializer_list<value_type> initlist)

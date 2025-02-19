@@ -5,6 +5,14 @@
 #include "utils/int_generator.hpp"
 
 TEST_CASE("eliasfano_sequence", "[public]") {
+    SECTION("construct from empty lists") {
+        using int_type = uint32_t;
+
+        std::vector<int_type> empty_seq;
+        yaef::eliasfano_sequence<int_type> seq{empty_seq.begin(), empty_seq.end()};
+        REQUIRE(seq.empty());
+    }
+
     SECTION("construct") {
         using int_type = uint16_t;
         yaef::test_utils::uniform_int_generator<int_type> gen;
