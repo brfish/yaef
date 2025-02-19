@@ -146,14 +146,18 @@
 #   define _YAEF_UNREACHABLE() ::abort()
 #endif
 
-#if _YAEF_HAS_BUILTIN(__builtin_assume)
-#   define _YAEF_ASSUME(_cond) __builtin_assume(_cond)
+#if _YAEF_HAS_BUILTIN(__builtin_assume) // provided by clang
+#   define _YAEF_ASSUME(...) __builtin_assume(__VA_ARGS__)
 #elif defined(__GNUC__)
-#   define _YAEF_ASSUME(_cond) __attribute__((assume(_cond)))
+#   if __GNUC__ >= 13
+#       define _YAEF_ASSUME(...) __attribute__((assume(__VA_ARGS__)))
+#   else
+#       define _YAEF_ASSUME(...) do { if (!static_cast<bool>(__VA_ARGS__)) { _YAEF_UNREACHABLE(); } } while (false)
+#   endif
 #elif defined(_MSC_VER)
-#   define _YAEF_ASSUME(_cond) __assume(_cond)
+#   define _YAEF_ASSUME(...) __assume(__VA_ARGS__)
 #else
-#   define _YAEF_ASSUME(_cond)
+#   define _YAEF_ASSUME(...)
 #endif
 
 #if __cplusplus < 201703L
