@@ -8,8 +8,8 @@ endmacro()
 # bit_view_test
 yaef_add_test(bit_view_test "bit_view_test.cpp")
 
-# bitset_foreach_test
-yaef_add_test(bitset_foreach_test "bitset_foreach_test.cpp")
+# bitmap_foreach_test
+yaef_add_test(bitmap_foreach_test "bitmap_foreach_test.cpp")
 
 # eliasfano_code_test
 yaef_add_test(eliasfano_code_test "eliasfano_code_test.cpp")

@@ -1290,7 +1290,7 @@ struct conditional_bitwise_not<false> {
 };
 
 template<typename F>
-inline size_t bitset_foreach_one(uint64_t block, F f, size_t index_offset = 0) {
+inline size_t bitmap_foreach_onebit(uint64_t block, const F &f, size_t index_offset = 0) {
     size_t popcnt = 0;
     while (block != 0) {
         uint64_t t = block & -block;
@@ -1303,34 +1303,34 @@ inline size_t bitset_foreach_one(uint64_t block, F f, size_t index_offset = 0) {
 }
 
 template<typename F>
-inline size_t bitset_foreach_zero(uint64_t block, F f, size_t index_offset = 0) {
-    return bitset_foreach_one(~block, f, index_offset);
+inline size_t bitmap_foreach_zerobit(uint64_t block, const F &f, size_t index_offset = 0) {
+    return bitmap_foreach_onebit(~block, f, index_offset);
 }
 
 template<bool BitType, typename F>
-inline size_t large_bitset_foreach_impl(const uint64_t *blocks, size_t num_blocks, F f) {
+inline size_t bitmap_multiblocks_foreach_impl(const uint64_t *blocks, size_t num_blocks, const F &f) {
     using block_handler = conditional_bitwise_not<!BitType>;
     size_t index_offset = 0;
     size_t popcnt = 0;
     for (size_t i = 0; i < num_blocks; ++i) {
-        popcnt += bitset_foreach_one(block_handler{}(blocks[i]), f, index_offset);
+        popcnt += bitmap_foreach_onebit(block_handler{}(blocks[i]), f, index_offset);
         index_offset += sizeof(uint64_t) * CHAR_BIT;
     }
     return popcnt;
 }
 
 template<typename F>
-inline size_t bitset_foreach_one(const uint64_t *blocks, size_t num_blocks, F f) {
-    return large_bitset_foreach_impl<true>(blocks, num_blocks, f);
+inline size_t bitmap_foreach_onebit(const uint64_t *blocks, size_t num_blocks, const F &f) {
+    return bitmap_multiblocks_foreach_impl<true>(blocks, num_blocks, f);
 }
 
 template<typename F>
-inline size_t bitset_foreach_zero(const uint64_t *blocks, size_t num_blocks, F f) {
-    return large_bitset_foreach_impl<false>(blocks, num_blocks, f);
+inline size_t bitmap_foreach_zerobit(const uint64_t *blocks, size_t num_blocks, const F &f) {
+    return bitmap_multiblocks_foreach_impl<false>(blocks, num_blocks, f);
 }
 
 template<bool BitType>
-class bitset_foreach_cursor {
+class bitmap_foreach_cursor {
 public:
     using size_type     = size_t;
     using block_type    = uint64_t;
@@ -1341,11 +1341,11 @@ private:
     using block_handler = conditional_bitwise_not<!BitType>;
 
 public:
-    bitset_foreach_cursor() noexcept
+    bitmap_foreach_cursor() noexcept
         : blocks_beg_(nullptr), blocks_end_(nullptr), cur_block_(0), 
           skipped_blocks_(0), cached_(0) { }
 
-    bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks) noexcept
+    bitmap_foreach_cursor(const uint64_t *blocks, size_type num_blocks) noexcept
         : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
@@ -1353,7 +1353,7 @@ public:
         update_cache();
     }
 
-    bitset_foreach_cursor(const uint64_t *blocks, size_type num_blocks, size_type num_skipped_bits) noexcept
+    bitmap_foreach_cursor(const uint64_t *blocks, size_type num_blocks, size_type num_skipped_bits) noexcept
         : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
           skipped_blocks_(0), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
@@ -1372,11 +1372,11 @@ public:
         update_cache();
     }
 
-    bitset_foreach_cursor(const bit_view &bits) noexcept
-        : bitset_foreach_cursor(bits.blocks(), bits.num_blocks()) { }
+    bitmap_foreach_cursor(const bit_view &bits) noexcept
+        : bitmap_foreach_cursor(bits.blocks(), bits.num_blocks()) { }
     
-    bitset_foreach_cursor(const bit_view &bits, size_type num_skipped_bits) noexcept
-        : bitset_foreach_cursor(bits.blocks(), bits.num_blocks(), num_skipped_bits) { }
+    bitmap_foreach_cursor(const bit_view &bits, size_type num_skipped_bits) noexcept
+        : bitmap_foreach_cursor(bits.blocks(), bits.num_blocks(), num_skipped_bits) { }
     
     _YAEF_ATTR_NODISCARD size_type current() const noexcept {
         _YAEF_ASSERT(is_valid());
@@ -1418,8 +1418,8 @@ private:
     }
 };
 
-using bitset_foreach_one_cursor  = bitset_foreach_cursor<true>;
-using bitset_foreach_zero_cursor = bitset_foreach_cursor<false>;
+using bitmap_foreach_onebit_cursor  = bitmap_foreach_cursor<true>;
+using bitmap_foreach_zerobit_cursor = bitmap_foreach_cursor<false>;
 
 } // namespace bits64
 
@@ -2392,7 +2392,7 @@ public:
 
     eliasfano_forward_iterator(const eliasfano_forward_iterator &other) = default;
 
-    eliasfano_forward_iterator(const bits64::bitset_foreach_one_cursor &high_bits_cursor, 
+    eliasfano_forward_iterator(const bits64::bitmap_foreach_onebit_cursor &high_bits_cursor, 
                                const bits64::packed_int_view &low_bits,
                                value_type min, bits64::packed_int_view::size_type index)
         : high_bits_cursor_(high_bits_cursor), low_bits_(low_bits),
@@ -2433,7 +2433,7 @@ public:
                            const eliasfano_forward_iterator<U> &rhs) noexcept;
 #endif
 private:
-    bits64::bitset_foreach_one_cursor  high_bits_cursor_;
+    bits64::bitmap_foreach_onebit_cursor  high_bits_cursor_;
     bits64::packed_int_view            low_bits_;
     value_type                         min_;
     bits64::packed_int_view::size_type index_;
@@ -2636,12 +2636,12 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator begin() const noexcept { 
-        return const_iterator{details::bits64::bitset_foreach_one_cursor{high_bits_.get_bits()},
+        return const_iterator{details::bits64::bitmap_foreach_onebit_cursor{high_bits_.get_bits()},
                               get_low_bits(), min(), 0};
     }
 
     _YAEF_ATTR_NODISCARD const_iterator end() const noexcept {
-        return const_iterator{details::bits64::bitset_foreach_one_cursor{},
+        return const_iterator{details::bits64::bitmap_foreach_onebit_cursor{},
                               get_low_bits(), min(), size()};
     }
 
@@ -2919,7 +2919,7 @@ private:
 
     _YAEF_ATTR_NODISCARD const_iterator make_iter(size_type high_bit_offset, size_type index) const noexcept {
         if (_YAEF_UNLIKELY(index == size())) { return end(); }
-        details::bits64::bitset_foreach_one_cursor high_bits_cursor{high_bits_.get_bits(), high_bit_offset};
+        details::bits64::bitmap_foreach_onebit_cursor high_bits_cursor{high_bits_.get_bits(), high_bit_offset};
         return const_iterator{high_bits_cursor, get_low_bits(), min(), index};
     }
 
@@ -3205,14 +3205,14 @@ public:
         const size_type num_high_bits = size_ + num_buckets_ + 1;
         const size_type num_high_blocks = details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH);
 
-        details::bits64::bitset_foreach_one_cursor high_bits_cursor{high_bits_mem_, num_high_blocks};
+        details::bits64::bitmap_foreach_onebit_cursor high_bits_cursor{high_bits_mem_, num_high_blocks};
         details::bits64::packed_int_view low_bits{static_cast<uint32_t>(low_width_), low_bits_mem_, size_};
         return const_iterator{high_bits_cursor, low_bits, min(), 0};
     }
 
     _YAEF_ATTR_NODISCARD const_iterator end() const noexcept {
         details::bits64::packed_int_view low_bits{static_cast<uint32_t>(low_width_), low_bits_mem_, size_};
-        return const_iterator{details::bits64::bitset_foreach_one_cursor{}, low_bits, min(), size_};
+        return const_iterator{details::bits64::bitmap_foreach_onebit_cursor{}, low_bits, min(), size_};
     }
 
     _YAEF_ATTR_NODISCARD const_iterator cbegin() const noexcept { return begin(); }
@@ -3560,7 +3560,7 @@ public:
         auto indices = details::make_unique_array<size_type>(num_indexed_bits);
         size_type indice_writer = 0;
 
-        details::bits64::large_bitset_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
+        details::bits64::bitmap_multiblocks_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
             indices[indice_writer++] = index;
         });
         pos_list_ = eliasfano_list<size_type, allocator_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
@@ -3574,7 +3574,7 @@ public:
         auto indices = details::make_unique_array<size_type>(num_indexed_bits);
         size_type indice_writer = 0;
 
-        details::bits64::large_bitset_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
+        details::bits64::bitmap_multiblocks_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
             if (indice_writer > num_indexed_bits) {
                 _YAEF_THROW(std::out_of_range{
                     "eliasfano_sparse_bitmap::eliasfano_sparse_bitmap: "
@@ -4389,7 +4389,7 @@ decode_eliasfano(OutputIterT out_first, size_t num_elems, uint32_t low_width,
     details::bits64::packed_int_view low_bits_view{low_width, const_cast<uint64_t *>(low_bits), num_low_blocks};
 
     size_t index = 0;
-    details::bits64::bitset_foreach_one(high_bits, num_high_blocks, [&](size_t pos) {
+    details::bits64::bitmap_foreach_onebit(high_bits, num_high_blocks, [&](size_t pos) {
         uint64_t high = pos - index;
         uint64_t low = low_bits_view.get_value(index);
         uint64_t val = (high << low_width) | low;

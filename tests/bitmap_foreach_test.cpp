@@ -5,8 +5,8 @@
 #include "utils/bit_generator.hpp"
 
 TEST_CASE("bitset_foreach_test", "[private]") {
-    using yaef::details::bits64::bitset_foreach_one_cursor;
-    using yaef::details::bits64::bitset_foreach_zero_cursor;
+    using yaef::details::bits64::bitmap_foreach_onebit_cursor;
+    using yaef::details::bits64::bitmap_foreach_zerobit_cursor;
     constexpr size_t NUM_BITS  = 1000000;
     constexpr size_t NUM_ONES  = 500000;
     constexpr size_t NUM_ZEROS = NUM_BITS - NUM_ONES;
@@ -17,7 +17,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
     const auto &bits = gen_res.view;
 
     SECTION("foreach ones") {
-        bitset_foreach_one_cursor cursor{bits.blocks(), bits.num_blocks()};
+        bitmap_foreach_onebit_cursor cursor{bits.blocks(), bits.num_blocks()};
         size_t popcnt = 0;
         auto bits_ref_res = gen.make_uninit_bits(NUM_BITS);
         auto &bits_ref = bits_ref_res.view;
@@ -32,7 +32,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
     }
     
     SECTION("foreach zeros") {
-        bitset_foreach_zero_cursor cursor{bits.blocks(), bits.num_blocks()};
+        bitmap_foreach_zerobit_cursor cursor{bits.blocks(), bits.num_blocks()};
         size_t popcnt = 0;
         auto bits_ref_res = gen.make_uninit_bits(NUM_BITS);
         auto &bits_ref = bits_ref_res.view;
@@ -48,7 +48,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
 
     SECTION("foreach ones with offset") {
         constexpr uint32_t OFFSET = 1234;
-        bitset_foreach_one_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
+        bitmap_foreach_onebit_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
         size_t popcnt = 0;
         auto bits_ref_res = gen.make_uninit_bits(NUM_BITS);
         auto &bits_ref = bits_ref_res.view;
@@ -72,7 +72,7 @@ TEST_CASE("bitset_foreach_test", "[private]") {
     
     SECTION("foreach zeros with offset") {
         constexpr uint32_t OFFSET = 27;
-        bitset_foreach_zero_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
+        bitmap_foreach_zerobit_cursor cursor{bits.blocks(), bits.num_blocks(), OFFSET};
         size_t popcnt = 0;
         auto bits_ref_res = gen.make_uninit_bits(NUM_BITS);
         auto &bits_ref = bits_ref_res.view;
