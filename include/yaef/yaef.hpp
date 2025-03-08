@@ -3120,7 +3120,7 @@ public:
 #endif
     eliasfano_sequence(from_sorted_t, RandomAccessIterT first, RandomAccessIterT last, 
                        const allocator_type &alloc = allocator_type{})
-        : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
+        : eliasfano_sequence(alloc) {
         if (first > last) {
             _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the iterators are invalid"});
         }
@@ -3140,7 +3140,7 @@ public:
 #endif
     eliasfano_sequence(RandomAccessIterT first, SentIterT last,
                        const allocator_type &alloc = allocator_type{})
-        : min_max_and_alloc_(std::pair<value_type, value_type>{}, alloc) {
+        : eliasfano_sequence(alloc) {
         if (first > last) {
             _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the iterators are invalid"});
         }
