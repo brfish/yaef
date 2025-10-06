@@ -60,6 +60,9 @@
 #if __cpp_concepts >= 201907L
 #   include <concepts>
 #   define _YAEF_USE_CXX_CONCEPTS 1
+#else
+#   include <vector> // for is_contiguous_iter
+#   include <string> // TODO: use forward declaration?
 #endif
 
 #if __cplusplus >= 201703L
@@ -341,6 +344,36 @@ template<typename T>
 struct is_random_access_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>> 
     : public std::is_base_of<std::random_access_iterator_tag, 
                              typename std::iterator_traits<T>::iterator_category> { };
+
+template<typename Cond1, typename Cond2>
+struct traits_or : std::integral_constant<bool, Cond1::value || Cond2::value> { };
+
+template<typename T, typename = void>
+struct is_contiguous_container_iter : std::false_type { };
+
+template<typename T>
+struct is_contiguous_container_iter<T, details::void_t<typename std::iterator_traits<T>::value_type>>
+    : traits_or<
+        traits_or<
+            std::is_same<typename std::vector<typename std::iterator_traits<T>::value_type>::iterator, T>,
+            std::is_same<typename std::vector<typename std::iterator_traits<T>::value_type>::const_iterator, T>
+        >,
+        traits_or<
+            std::is_same<typename std::basic_string<typename std::iterator_traits<T>::value_type>::iterator, T>,
+            std::is_same<typename std::basic_string<typename std::iterator_traits<T>::value_type>::const_iterator, T>
+        >
+      > { };
+
+template<typename T, typename = void>
+struct is_contiguous_iter : std::false_type { };
+
+template<typename T>
+struct is_contiguous_iter<T, typename std::enable_if<std::is_pointer<T>::value>::type> : std::true_type { };
+
+template<typename T>
+struct is_contiguous_iter<T, typename std::enable_if<is_contiguous_container_iter<T>::value>::type> 
+    : std::true_type { };
+
 #endif
 
 template<typename InputIterT, typename SentIterT>
@@ -2731,6 +2764,48 @@ public:
         return iter != end() && *iter == target;
     }
 
+    eliasfano_list &assign(std::initializer_list<value_type> initlist) {
+        eliasfano_list<value_type> new_list(initlist);
+        swap(new_list);
+        return *this;
+    }
+
+    eliasfano_list &assign(from_sorted_t, std::initializer_list<value_type> initlist) {
+        eliasfano_list<value_type> new_list(from_sorted, initlist);
+        swap(new_list);
+        return *this;
+    }
+
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
+#else
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
+#endif
+    eliasfano_list &assign(RandomAccessIterT first, SentIterT last) {
+        eliasfano_list<value_type> new_list(first, last);
+        swap(new_list);
+        return *this;
+    }
+
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
+#else
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
+#endif
+    eliasfano_list &assign(from_sorted_t, RandomAccessIterT first, SentIterT last) {
+        eliasfano_list<value_type> new_list(from_sorted, first, last);
+        swap(new_list);
+        return *this;
+    }
+
     void swap(eliasfano_list &other) 
         noexcept(alloc_traits::propagate_on_container_swap::value ||
                  alloc_traits::is_always_equal::value) {
@@ -3217,6 +3292,48 @@ public:
 
     _YAEF_ATTR_NODISCARD const_iterator cbegin() const noexcept { return begin(); }
     _YAEF_ATTR_NODISCARD const_iterator cend() const noexcept { return end(); }
+
+    eliasfano_sequence &assign(std::initializer_list<value_type> initlist) {
+        eliasfano_sequence<value_type> new_list(initlist);
+        swap(new_list);
+        return *this;
+    }
+
+    eliasfano_sequence &assign(from_sorted_t, std::initializer_list<value_type> initlist) {
+        eliasfano_sequence<value_type> new_list(from_sorted, initlist);
+        swap(new_list);
+        return *this;
+    }
+
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
+#else
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
+#endif
+    eliasfano_sequence &assign(RandomAccessIterT first, SentIterT last) {
+        eliasfano_sequence<value_type> new_list(first, last);
+        swap(new_list);
+        return *this;
+    }
+
+#if _YAEF_USE_CXX_CONCEPTS
+    template<std::random_access_iterator RandomAccessIterT,
+             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
+#else
+    template<typename RandomAccessIterT, typename SentIterT,
+             typename = typename std::enable_if<
+                details::is_random_access_iter<RandomAccessIterT>::value &&
+                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
+#endif
+    eliasfano_sequence &assign(from_sorted_t, RandomAccessIterT first, SentIterT last) {
+        eliasfano_sequence<value_type> new_list(from_sorted, first, last);
+        swap(new_list);
+        return *this;
+    }
 
     void swap(eliasfano_sequence &other) noexcept {
         if (_YAEF_UNLIKELY(this == std::addressof(other))) {
