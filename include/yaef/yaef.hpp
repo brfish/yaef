@@ -1370,39 +1370,58 @@ public:
     static constexpr bool BIT_TYPE = BitType;
     static constexpr uint32_t BLOCK_WIDTH = sizeof(block_type) * CHAR_BIT;
 
+    struct nocheck_tag { };
+
 private:
     using block_handler = conditional_bitwise_not<!BitType>;
 
 public:
     bitmap_foreach_cursor() noexcept
-        : blocks_beg_(nullptr), blocks_end_(nullptr), cur_block_(0), 
-          skipped_blocks_(0), cached_(0) { }
+        : blocks_beg_(nullptr), blocks_end_(nullptr), cached_(0) { }
+
+    bitmap_foreach_cursor(const bitmap_foreach_cursor &other)
+        : blocks_beg_(other.blocks_beg_), blocks_end_(other.blocks_end_), cached_(other.cached_) { }
 
     bitmap_foreach_cursor(const uint64_t *blocks, size_type num_blocks) noexcept
-        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
-          skipped_blocks_(0), cached_(0) {
+        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
-        move_to_next_non_empty_block();
-        update_cache();
+        for (const block_type *ptr = blocks_beg_; ptr < blocks_end_; ++ptr) {
+            const block_type block = block_handler{}(*ptr);
+            if (_YAEF_LIKELY(block != 0)) {
+                const auto block_idx = static_cast<size_t>(ptr - blocks_beg_);
+                cached_ = block_idx * BLOCK_WIDTH + count_trailing_zero(block);
+                return;
+            }
+        }
+        cached_ = num_blocks * BLOCK_WIDTH;
     }
 
+    bitmap_foreach_cursor(const uint64_t *blocks, size_t num_blocks, size_type cached, nocheck_tag) noexcept
+        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cached_(cached) { }
+
     bitmap_foreach_cursor(const uint64_t *blocks, size_type num_blocks, size_type num_skipped_bits) noexcept
-        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cur_block_(0), 
-          skipped_blocks_(0), cached_(0) {
+        : blocks_beg_(blocks), blocks_end_(blocks + num_blocks), cached_(0) {
         _YAEF_ASSERT(num_blocks != 0);
         _YAEF_ASSERT(idiv_ceil(num_skipped_bits, BLOCK_WIDTH) <= num_blocks);
-
+        
         const size_type num_full_blocks = num_skipped_bits / BLOCK_WIDTH,
                         num_residual_bits = num_skipped_bits % BLOCK_WIDTH;
-        
-        skipped_blocks_ += num_full_blocks;
+        const block_type mask = ~bits64::make_mask_lsb1(num_residual_bits);
+        const block_type block = block_handler{}(blocks_beg_[num_full_blocks]) & mask;
 
-        cur_block_ = block_handler{}(*get_cur_block_ptr()) & (~bits64::make_mask_lsb1(num_residual_bits));
-        if (cur_block_ == 0) {
-            ++skipped_blocks_;
-            move_to_next_non_empty_block();
+        if (_YAEF_LIKELY(block != 0)) {
+            cached_ = num_full_blocks * BLOCK_WIDTH + count_trailing_zero(block);
+            return;
         }
-        update_cache();
+        for (const block_type *ptr = blocks_beg_ + num_full_blocks + 1; ptr < blocks_end_; ++ptr) {
+            const block_type block = block_handler{}(*ptr);
+            if (block != 0) {
+                const auto block_idx = static_cast<size_t>(ptr - blocks_beg_);
+                cached_ = block_idx * BLOCK_WIDTH + count_trailing_zero(block);
+                return;
+            }
+        }
+        cached_ = num_blocks * BLOCK_WIDTH;
     }
 
     bitmap_foreach_cursor(const bit_view &bits) noexcept
@@ -1410,44 +1429,88 @@ public:
     
     bitmap_foreach_cursor(const bit_view &bits, size_type num_skipped_bits) noexcept
         : bitmap_foreach_cursor(bits.blocks(), bits.num_blocks(), num_skipped_bits) { }
-    
+
+    bitmap_foreach_cursor(const bit_view &bits, size_type cached, nocheck_tag) noexcept
+        : bitmap_foreach_cursor(bits.blocks(), bits.num_blocks(), cached, nocheck_tag{}) { }
+
     _YAEF_ATTR_NODISCARD size_type current() const noexcept {
-        _YAEF_ASSERT(is_valid());
-        return skipped_blocks_ * BLOCK_WIDTH + cached_;
+        return cached_;
     }
 
-    _YAEF_ATTR_NODISCARD bool is_valid() const noexcept { return get_cur_block_ptr() != blocks_end_; }
+    _YAEF_ATTR_NODISCARD bool is_valid() const noexcept {
+        return cached_ != num_blocks() * BLOCK_WIDTH;
+    }
 
     void next() {
-        if (_YAEF_UNLIKELY(cur_block_ == 0)) {
-            ++skipped_blocks_;
-            move_to_next_non_empty_block();
+        _YAEF_ASSERT(cached_ < num_blocks() * BLOCK_WIDTH);
+
+        const size_type block_idx = cached_ / BLOCK_WIDTH,
+                        bit_offset = cached_ % BLOCK_WIDTH;
+        const block_type mask = ~bits64::make_mask_lsb1(bit_offset + 1);
+
+        const block_type block = block_handler{}(blocks_beg_[block_idx]) & mask;
+
+        if (block != 0) {
+            cached_ = block_idx * BLOCK_WIDTH + count_trailing_zero(block);
+            return;
         }
-        update_cache();
+
+        for (const block_type *ptr = blocks_beg_ + block_idx + 1; ptr < blocks_end_; ++ptr) {
+            const block_type block = block_handler{}(*ptr);
+            if (_YAEF_LIKELY(block != 0)) {
+                const auto block_idx = static_cast<size_t>(ptr - blocks_beg_);
+                cached_ = block_idx * BLOCK_WIDTH + count_trailing_zero(block);
+                return;
+            }
+        }
+        cached_ = num_blocks() * BLOCK_WIDTH;
+    }
+
+    void prev() {
+        auto msb = [](block_type b) -> uint32_t {
+            _YAEF_ASSERT(b != 0);
+            return BLOCK_WIDTH - count_leading_zero(b) - 1;
+        };
+
+        if (_YAEF_UNLIKELY(cached_ == num_blocks() * BLOCK_WIDTH)) {
+            for (const block_type *ptr = blocks_end_ - 1; ptr >= blocks_beg_; --ptr) {
+                const block_type block = block_handler{}(*ptr);
+                if (_YAEF_LIKELY(block != 0)) {
+                    const auto block_idx = static_cast<size_t>(ptr - blocks_beg_);
+                    cached_ = block_idx * BLOCK_WIDTH + msb(block);
+                    return;
+                }
+            }
+        }
+
+        const uint64_t block_idx = cached_ / BLOCK_WIDTH,
+                       bit_offset = cached_ % BLOCK_WIDTH;
+        const block_type mask = make_mask_lsb1(bit_offset);
+        const block_type block = block_handler{}(blocks_beg_[block_idx]) & mask;
+
+        if (_YAEF_LIKELY(block != 0)) {
+            cached_ = block_idx * BLOCK_WIDTH + msb(block);
+            return;
+        }
+
+        for (const block_type *ptr = blocks_beg_ + block_idx - 1; ptr >= blocks_beg_; --ptr) {
+            const block_type block = block_handler{}(*ptr);
+            if (_YAEF_LIKELY(block != 0)) {
+                const size_t block_idx = ptr - blocks_beg_;
+                cached_ = block_idx * BLOCK_WIDTH + msb(block);
+                return;
+            }
+        }
+        cached_ = num_blocks() * BLOCK_WIDTH;
     }
 
 private:
     const block_type *blocks_beg_;
     const block_type *blocks_end_;
-    block_type        cur_block_;
-    uint64_t          skipped_blocks_;
-    uint32_t          cached_;
+    size_t            cached_;
 
-    _YAEF_ATTR_NODISCARD const block_type *get_cur_block_ptr() const {
-        return blocks_beg_ + skipped_blocks_;
-    }
-
-    void move_to_next_non_empty_block() {
-        while (get_cur_block_ptr() != blocks_end_ && block_handler{}(*get_cur_block_ptr()) == 0) {
-            ++skipped_blocks_;
-        }
-        cur_block_ = block_handler{}(*get_cur_block_ptr());
-    }
-
-    void update_cache() {
-        cached_ = count_trailing_zero(cur_block_);
-        block_type tmp = cur_block_ & -cur_block_;
-        cur_block_ ^= tmp;
+    _YAEF_ATTR_NODISCARD size_t num_blocks() const {
+        return blocks_end_ - blocks_beg_;
     }
 };
 
@@ -2411,21 +2474,21 @@ operator!=(const selectable_dense_bits &lhs, const selectable_dense_bits &rhs) n
 #endif
 
 template<typename T>
-class eliasfano_forward_iterator {
+class eliasfano_bidirectional_iterator {
 public:
-    using iterator_category = std::forward_iterator_tag;
+    using iterator_category = std::bidirectional_iterator_tag;
     using value_type        = T;
     using difference_type   = ptrdiff_t;
     using pointer           = value_type *;
     using reference         = value_type;
 
 public:
-    eliasfano_forward_iterator() noexcept
+    eliasfano_bidirectional_iterator() noexcept
         : index_(0), min_(0) { }
 
-    eliasfano_forward_iterator(const eliasfano_forward_iterator &other) = default;
+    eliasfano_bidirectional_iterator(const eliasfano_bidirectional_iterator &other) = default;
 
-    eliasfano_forward_iterator(const bits64::bitmap_foreach_onebit_cursor &high_bits_cursor, 
+    eliasfano_bidirectional_iterator(const bits64::bitmap_foreach_onebit_cursor &high_bits_cursor, 
                                const bits64::packed_int_view &low_bits,
                                value_type min, bits64::packed_int_view::size_type index)
         : high_bits_cursor_(high_bits_cursor), low_bits_(low_bits),
@@ -2439,16 +2502,29 @@ public:
         return static_cast<value_type>(static_cast<uint64_t>(min_) + merged);
     }
 
-    eliasfano_forward_iterator &operator++() noexcept {
+    eliasfano_bidirectional_iterator &operator++() noexcept {
         ++index_;
         high_bits_cursor_.next();
         return *this;
     }
 
-    eliasfano_forward_iterator operator++(int) noexcept {
-        eliasfano_forward_iterator old{*this};
+    eliasfano_bidirectional_iterator operator++(int) noexcept {
+        eliasfano_bidirectional_iterator old{*this};
         ++index_;
         high_bits_cursor_.next();
+        return old;
+    }
+
+    eliasfano_bidirectional_iterator &operator--() noexcept {
+        --index_;
+        high_bits_cursor_.prev();
+        return *this;
+    }
+
+    eliasfano_bidirectional_iterator operator--(int) noexcept {
+        eliasfano_bidirectional_iterator old{*this};
+        --index_;
+        high_bits_cursor_.prev();
         return old;
     }
 
@@ -2457,31 +2533,31 @@ public:
     }
 
     template<typename U>
-    friend bool operator==(const eliasfano_forward_iterator<U> &lhs, 
-                           const eliasfano_forward_iterator<U> &rhs) noexcept;
+    friend bool operator==(const eliasfano_bidirectional_iterator<U> &lhs, 
+                           const eliasfano_bidirectional_iterator<U> &rhs) noexcept;
 
 #if __cplusplus < 202002L
     template<typename U>
-    friend bool operator!=(const eliasfano_forward_iterator<U> &lhs, 
-                           const eliasfano_forward_iterator<U> &rhs) noexcept;
+    friend bool operator!=(const eliasfano_bidirectional_iterator<U> &lhs, 
+                           const eliasfano_bidirectional_iterator<U> &rhs) noexcept;
 #endif
 private:
-    bits64::bitmap_foreach_onebit_cursor  high_bits_cursor_;
-    bits64::packed_int_view            low_bits_;
-    value_type                         min_;
-    bits64::packed_int_view::size_type index_;
+    bits64::bitmap_foreach_onebit_cursor high_bits_cursor_;
+    bits64::packed_int_view              low_bits_;
+    value_type                           min_;
+    bits64::packed_int_view::size_type   index_;
 };
 
 template<typename T>
-_YAEF_ATTR_NODISCARD inline bool operator==(const eliasfano_forward_iterator<T> &lhs, 
-                                            const eliasfano_forward_iterator<T> &rhs) noexcept {
+_YAEF_ATTR_NODISCARD inline bool operator==(const eliasfano_bidirectional_iterator<T> &lhs, 
+                                            const eliasfano_bidirectional_iterator<T> &rhs) noexcept {
     return lhs.index_ == rhs.index_ && lhs.low_bits_.blocks() == rhs.low_bits_.blocks();
 }
 
 #if __cplusplus < 202002L
 template<typename U>
-_YAEF_ATTR_NODISCARD inline bool operator!=(const eliasfano_forward_iterator<U> &lhs, 
-                                            const eliasfano_forward_iterator<U> &rhs) noexcept {
+_YAEF_ATTR_NODISCARD inline bool operator!=(const eliasfano_bidirectional_iterator<U> &lhs, 
+                                            const eliasfano_bidirectional_iterator<U> &rhs) noexcept {
     return !(lhs == rhs);
 }
 #endif
@@ -2506,7 +2582,7 @@ class eliasfano_list {
     _YAEF_STATIC_ASSERT_NOMSG(std::is_integral<T>::value);
 #endif
     template<typename>
-    friend class details::eliasfano_forward_iterator;
+    friend class details::eliasfano_bidirectional_iterator;
 
     template<bool, typename>
     friend class eliasfano_sparse_bitmap;
@@ -2525,7 +2601,7 @@ public:
     using reference           = const_reference;
     using const_pointer       = const value_type *;
     using pointer             = const_pointer;
-    using const_iterator      = details::eliasfano_forward_iterator<value_type>;
+    using const_iterator      = details::eliasfano_bidirectional_iterator<value_type>;
     using iterator            = const_iterator;
     using allocator_type      = AllocT;
 
@@ -2674,7 +2750,9 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator end() const noexcept {
-        return const_iterator{details::bits64::bitmap_foreach_onebit_cursor{},
+        using cursor = details::bits64::bitmap_foreach_onebit_cursor;
+        const size_t endpos = high_bits_.get_bits().num_blocks() * details::bits64::bit_view::BLOCK_WIDTH;
+        return const_iterator{cursor{high_bits_.get_bits(), endpos, cursor::nocheck_tag{}},
                               get_low_bits(), min(), size()};
     }
 
@@ -3136,7 +3214,7 @@ public:
     using value_type      = T;
     using size_type       = size_t;
     using difference_type = ptrdiff_t;
-    using const_iterator  = details::eliasfano_forward_iterator<T>;
+    using const_iterator  = details::eliasfano_bidirectional_iterator<T>;
     using iterator        = const_iterator;
     using allocator_type  = AllocT;
 

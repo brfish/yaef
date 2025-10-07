@@ -137,7 +137,7 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         }
     }
 
-    SECTION("iterate") {
+    SECTION("iterate forward") {
         using int_type = uint32_t;
         yaef::test_utils::uniform_int_generator<uint32_t> gen{
             std::numeric_limits<int_type>::min(),
@@ -154,6 +154,32 @@ TEST_CASE("eliasfano_list_test", "[public]") {
         i = 20;
         for (auto iter = list.iter(i); iter != list.end(); ++iter, ++i) {
             REQUIRE(*iter == ints[i]);
+        }
+    }
+
+    SECTION("iterate backward") {
+        using int_type = uint32_t;
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{
+            std::numeric_limits<int_type>::min(),
+            std::numeric_limits<int_type>::max(),
+            yaef::test_utils::make_random_seed()};
+        auto ints = gen.make_sorted_list(1000000 / 2);
+        yaef::eliasfano_list<int_type> list{yaef::from_sorted, ints.begin(), ints.end()};
+
+        {
+            auto iter = std::prev(list.end());
+            for (size_t i = list.size(); i > 0; --i) {
+                REQUIRE(*iter == ints[i - 1]);
+                --iter;
+            }
+        }
+        {
+            ssize_t i = 23;
+            auto iter = list.iter(i);
+            for (; i >= 0; --i) {
+                REQUIRE(*iter == ints[i]);
+                --iter;
+            }
         }
     }
 
