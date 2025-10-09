@@ -163,7 +163,7 @@ int main(void) {
     constexpr size_t NUM_INTS = 5000000;
 
     std::cout << "============== random ==============\n";
-    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, std::numeric_limits<int_type>::max() / 100);
+    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, NUM_INTS * 32);
     run_benchmark<NUM_INTS>(random_inputs);
 
     std::cout << "============== dense ==============\n";

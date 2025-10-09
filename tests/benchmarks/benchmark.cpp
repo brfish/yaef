@@ -38,7 +38,7 @@ int main(int argc, char *argv[]) {
     constexpr size_t NUM_INTS = 5000000;
 
     std::cout << "<<<<<<<<<< random >>>>>>>>>>\n";
-    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, std::numeric_limits<int_type>::max() / 100);
+    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, NUM_INTS * 32);
     run_benchmarks(random_inputs);
 
     std::cout << "<<<<<<<<<< dense >>>>>>>>>>\n";
