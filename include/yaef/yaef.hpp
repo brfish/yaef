@@ -1450,7 +1450,7 @@ public:
 
         const block_type block = block_handler{}(blocks_beg_[block_idx]) & mask;
 
-        if (block != 0) {
+        if (_YAEF_UNLIKELY(block != 0)) {
             cached_ = block_idx * BLOCK_WIDTH + count_trailing_zero(block);
             return;
         }
@@ -2401,8 +2401,6 @@ private:
         constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
         const size_type bits_block_index = (sample.position + 1) / BITS_BLOCK_WIDTH,
                         bits_block_offset = (sample.position + 1) % BITS_BLOCK_WIDTH;
-
-        prefetch_read(bits_.blocks() + bits_block_index);
         
         size_type result = sample.position + 1;
 
@@ -3101,12 +3099,11 @@ private:
 
         size_type result = end;
 
-        get_low_bits().prefetch_for_read(start, end);
-
+        auto &low_bits = get_low_bits();
         size_type base = start;
         while (len > 0) {
             size_type half = len / 2;
-            base += (cmp(get_low_bits().get_value(base + half), l)) * (len - half);
+            base += (cmp(low_bits.get_value(base + half), l)) * (len - half);
             len = half;
         }
         result = base;
