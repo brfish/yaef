@@ -114,6 +114,22 @@ public:
     value_type min() const override { return dist_impl_.a(); }
     value_type max() const override { return dist_impl_.b(); }
 
+    std::vector<value_type> make_permutation(size_type num) {
+        using ssize_type = typename std::make_signed<size_type>::type;
+        using param = typename dist_impl_type::param_type;
+        dist_impl_type dist;
+
+        std::vector<value_type> result(num);
+        for (size_type i = 0; i < num; ++i) {
+            result[i] = i;
+        }
+
+        for (ssize_type i = num - 1; i > 0; --i) {
+            std::swap(result[i], result[dist(this->rng_, param(0, i))]);
+        }
+        return result;
+    }
+
 private:
     using dist_impl_type = test_utils::details::uniform_dist_type<value_type>;
     dist_impl_type dist_impl_;
