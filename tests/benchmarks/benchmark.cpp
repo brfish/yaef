@@ -3,6 +3,7 @@
 #include "benchmark_binary_search.hpp"
 #include "benchmark_eliasfano_list.hpp"
 #include "benchmark_eliasfano_sequence.hpp"
+#include "benchmark_packed_binary_search.hpp"
 #include "benchmark_stl_set.hpp"
 
 template<typename IntT>
@@ -25,6 +26,8 @@ void run_benchmarks(const benchmark_inputs<IntT> &inputs) {
 
     REPORT_BENCHMARK(binary_search_benchmark);
     REPORT_BENCHMARK(branchless_binary_search_benchmark);
+    REPORT_BENCHMARK(packed_binary_search_benchmark);
+    REPORT_BENCHMARK(branchless_packed_binary_search_benchmark);
     REPORT_BENCHMARK(eliasfano_list_benchmark);
     REPORT_BENCHMARK(eliasfano_sequence_benchmark);
     REPORT_BENCHMARK(stl_set_benchmark);
