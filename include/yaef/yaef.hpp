@@ -266,6 +266,14 @@ enum class error_code : uint32_t {
         } while (false);
 #endif
 
+template<uint32_t W>
+struct assumed_width_t : std::integral_constant<uint32_t, W> { };
+
+#if __cplusplus >= 201703L
+template<uint32_t W>
+inline constexpr assumed_width_t<W> assumed_width;
+#endif
+
 namespace details {
 
 inline void raise_assertion(const char *filename, int line, const char *expr) {
@@ -335,7 +343,7 @@ struct is_bidirectional_iter : std::false_type { };
 template<typename T>
 struct is_bidirectional_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>>
     : std::is_base_of<std::bidirectional_iterator_tag,
-                     typename std::iterator_traits<T>::iterator_category> { };
+                      typename std::iterator_traits<T>::iterator_category> { };
 
 template<typename T, typename = void>
 struct is_random_access_iter : std::false_type { };
@@ -376,6 +384,27 @@ struct is_contiguous_iter<T, typename std::enable_if<is_contiguous_container_ite
 
 #endif
 
+template<typename T, template<typename> class Constraint, typename = void>
+struct iterator_value_type_constraint : std::false_type { };
+
+template<typename T, template<typename> class Constraint>
+struct iterator_value_type_constraint<T, Constraint, void_t<typename std::iterator_traits<T>::value_type>> 
+    : std::integral_constant<bool, Constraint<typename std::iterator_traits<T>::value_type>::value> { };
+
+#if _YAEF_USE_CXX_CONCEPTS
+#   define _YAEF_REQUIRES_RANDOM_ACCESS_ITER(_iter, _sent, _val_constraint) \
+    template<std::random_access_iterator _iter, \
+             std::sized_sentinel_for<_iter> _sent> \
+    requires (_val_constraint<std::iter_value_t<_iter>>::value)
+#else
+#   define _YAEF_REQUIRES_RANDOM_ACCESS_ITER(_iter, _sent, _val_constraint) \
+    template<typename _iter, typename _sent, \
+             typename = typename std::enable_if< \
+                details::is_random_access_iter<_iter>::value && \
+                std::is_same<_iter, _sent>::value && \
+                details::iterator_value_type_constraint<_iter, _val_constraint>::value>::type>
+#endif
+
 template<typename InputIterT, typename SentIterT>
 _YAEF_ATTR_NODISCARD inline ptrdiff_t iter_distance(InputIterT first, SentIterT last) {
 #if _YAEF_USE_STL_RANGES_ALG
@@ -384,6 +413,18 @@ _YAEF_ATTR_NODISCARD inline ptrdiff_t iter_distance(InputIterT first, SentIterT 
     _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename details::remove_cvref<InputIterT>::type,
                                            typename details::remove_cvref<SentIterT>::type>::value);
     return std::distance(first, last);
+#endif
+}
+
+template<typename InputIterT, typename SentIterT>
+_YAEF_ATTR_NODISCARD inline typename std::iterator_traits<InputIterT>::value_type
+find_max_value(InputIterT first, SentIterT last) {
+#if _YAEF_USE_STL_RANGES_ALG
+    return *std::ranges::max_element(first, last);
+#else
+    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename details::remove_cvref<InputIterT>::type,
+                                           typename details::remove_cvref<SentIterT>::type>::value);
+    return *std::max_element(first, last);
 #endif
 }
 
@@ -1153,7 +1194,8 @@ public:
 
     _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_bits_; }
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
-    _YAEF_ATTR_NODISCARD block_type *blocks() const noexcept { return blocks_; }
+    _YAEF_ATTR_NODISCARD const block_type *blocks() const noexcept { return blocks_; }
+    _YAEF_ATTR_NODISCARD block_type *blocks() noexcept { return blocks_; }
 
     _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { 
         return bits64::idiv_ceil(num_bits_, BLOCK_WIDTH); 
@@ -1222,6 +1264,8 @@ public:
         std::fill_n(blocks_, num_blocks() - 1, std::numeric_limits<block_type>::max());
         blocks_[num_blocks() - 1] = make_mask_lsb1(size() - (num_blocks() - 1) * BLOCK_WIDTH);
     }
+
+
 
     void swap(bit_view &other) noexcept {
         std::swap(blocks_, other.blocks_);
@@ -2650,15 +2694,7 @@ public:
         has_duplicates_ = details::exchange(other.has_duplicates_, false);
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_list(RandomAccessIterT first, SentIterT last, 
                    const allocator_type &alloc = allocator_type{})
         : eliasfano_list(alloc) {
@@ -2676,15 +2712,7 @@ public:
         unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_list(from_sorted_t, RandomAccessIterT first, SentIterT last, 
                    const allocator_type &alloc = allocator_type{})
         : eliasfano_list(alloc) {
@@ -2852,30 +2880,14 @@ public:
         return *this;
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_list &assign(RandomAccessIterT first, SentIterT last) {
         eliasfano_list<value_type> new_list(first, last);
         swap(new_list);
         return *this;
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_list &assign(from_sorted_t, RandomAccessIterT first, SentIterT last) {
         eliasfano_list<value_type> new_list(from_sorted, first, last);
         swap(new_list);
@@ -3262,13 +3274,8 @@ public:
         }
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
-#else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
-#endif
-    eliasfano_sequence(from_sorted_t, RandomAccessIterT first, RandomAccessIterT last, 
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    eliasfano_sequence(from_sorted_t, RandomAccessIterT first, SentIterT last, 
                        const allocator_type &alloc = allocator_type{})
         : eliasfano_sequence(alloc) {
         if (first > last) {
@@ -3279,15 +3286,7 @@ public:
         }       
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_sequence(RandomAccessIterT first, SentIterT last,
                        const allocator_type &alloc = allocator_type{})
         : eliasfano_sequence(alloc) {
@@ -3380,30 +3379,14 @@ public:
         return *this;
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_sequence &assign(RandomAccessIterT first, SentIterT last) {
         eliasfano_sequence<value_type> new_list(first, last);
         swap(new_list);
         return *this;
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT,
-             std::sized_sentinel_for<RandomAccessIterT> SentIterT>
-#else
-    template<typename RandomAccessIterT, typename SentIterT,
-             typename = typename std::enable_if<
-                details::is_random_access_iter<RandomAccessIterT>::value &&
-                std::is_same<RandomAccessIterT, SentIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_sequence &assign(from_sorted_t, RandomAccessIterT first, SentIterT last) {
         eliasfano_sequence<value_type> new_list(from_sorted, first, last);
         swap(new_list);
@@ -3755,7 +3738,7 @@ public:
         details::bits64::bitmap_multiblocks_foreach_impl<INDEXED_BIT_TYPE>(blocks, num_blocks, [&](size_type index) {
             indices[indice_writer++] = index;
         });
-        pos_list_ = eliasfano_list<size_type, allocator_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
+        pos_list_ = eliasfano_list<size_type, allocator_type>(indices.get(), indices.get() + num_indexed_bits, alloc);
     }
 
     // construct from the data of a plain bitmap (the number of indexed bits is known)
@@ -3777,26 +3760,16 @@ public:
         pos_list_ = eliasfano_list<size_type, allocator_type>{indices.get(), indices.get() + num_indexed_bits, alloc};
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
-#else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
-#endif
-    eliasfano_sparse_bitmap(size_t num_bits, RandomAccessIterT indices_first, RandomAccessIterT indices_last,
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    eliasfano_sparse_bitmap(size_t num_bits, RandomAccessIterT indices_first, SentIterT indices_last,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type, allocator_type>{indices_first, indices_last, alloc};
     }
 
-#if _YAEF_USE_CXX_CONCEPTS
-    template<std::random_access_iterator RandomAccessIterT>
-#else
-    template<typename RandomAccessIterT, 
-             typename = typename std::enable_if<details::is_random_access_iter<RandomAccessIterT>::value>::type>
-#endif
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
     eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, 
-                            RandomAccessIterT indices_first, RandomAccessIterT indices_last,
+                            RandomAccessIterT indices_first, SentIterT indices_last,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type, allocator_type>{from_sorted, indices_first, indices_last, alloc};
@@ -4040,8 +4013,29 @@ public:
         other.get_view() = view_type{};
     }
 
-    bit_buffer(size_type size) {
+    explicit bit_buffer(size_type size) {
         get_view() = details::allocate_bits(get_alloc(), size);
+    }
+
+    bit_buffer(std::initializer_list<bool> initlist)
+        : bit_buffer(initlist.size()) {
+        size_type i = 0;
+        for (bool val : initlist) {
+            set_bit(i++, val);
+        }
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    bit_buffer(RandomAccessIterT block_first, SentIterT block_last) {
+        using input_type = typename std::iterator_traits<RandomAccessIterT>::value_type;
+
+        _YAEF_STATIC_ASSERT_NOMSG(sizeof(input_type) == sizeof(block_type));
+        size_type num_blocks = details::iter_distance(block_first, block_last);
+        get_view() = details::allocate_bits(get_alloc(), sizeof(input_type) * CHAR_BIT * num_blocks);
+        block_type *block_arr = get_view().blocks();
+        for (size_type i = 0; i < num_blocks; ++i) {
+            block_arr[i] = *block_first++;
+        }
     }
 
     ~bit_buffer() {
@@ -4065,6 +4059,34 @@ public:
     _YAEF_ATTR_NODISCARD const block_type *block_data() const noexcept { return get_view().blocks(); }
     _YAEF_ATTR_NODISCARD block_type *block_data() noexcept { return get_view().blocks(); }
     _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { return get_view().num_blocks(); }
+
+    bit_buffer &assign(std::initializer_list<bool> initlist) {
+        if (initlist.size() != size()) {
+            details::deallocate_bits(get_alloc(), get_view());
+            get_view() = details::allocate_bits(get_alloc(), initlist.size());
+        }
+        size_type i = 0;
+        for (bool val : initlist) {
+            set_bit(i++, val);
+        }
+        return *this;
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    bit_buffer &assign(RandomAccessIterT block_first, SentIterT block_last) {
+        using input_type = typename std::iterator_traits<RandomAccessIterT>::value_type;
+
+        _YAEF_STATIC_ASSERT_NOMSG(sizeof(input_type) == sizeof(block_type));
+        size_type num_blocks = details::iter_distance(block_first, block_last);
+        if (num_blocks != this->num_blocks()) {
+            details::deallocate_packed_ints(get_alloc(), get_view());
+            get_view() = details::allocate_bits(get_alloc(), sizeof(input_type) * CHAR_BIT * num_blocks);
+        }
+        block_type *block_arr = get_view().blocks();
+        for (size_type i = 0; i < num_blocks; ++i) {
+            block_arr[i] = *block_first++;
+        }
+    }
 
     _YAEF_ATTR_NODISCARD value_type get_bit(size_type index) const { 
         return get_view().get_bit(index); 
@@ -4192,6 +4214,32 @@ public:
         get_view() = details::allocate_packed_ints(get_alloc(), width, size);
     }
 
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    packed_int_buffer(RandomAccessIterT first, SentIterT last) {
+        auto max_val = details::find_max_value(first, last);
+        uint32_t width = std::max<uint32_t>(1, details::bits64::bit_width(max_val));
+        size_type size = details::iter_distance(first, last);
+        get_view() = details::allocate_packed_ints(get_alloc(), width, size);
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    packed_int_buffer(RandomAccessIterT first, SentIterT last, uint32_t width) {
+        size_type size = details::iter_distance(first, last);
+        get_view() = details::allocate_packed_ints(get_alloc(), width, size);
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+    }
+
+    packed_int_buffer(std::initializer_list<value_type> initlist)
+        : packed_int_buffer(initlist.begin(), initlist.end()) { }
+
+    packed_int_buffer(std::initializer_list<value_type> initlist, uint32_t width)
+        : packed_int_buffer(initlist.begin(), initlist.end(), width) { }
+
     ~packed_int_buffer() {
         details::deallocate_packed_ints(get_alloc(), get_view());
     }
@@ -4217,6 +4265,43 @@ public:
     _YAEF_ATTR_NODISCARD const block_type *block_data() const noexcept { return get_view().blocks(); }
     _YAEF_ATTR_NODISCARD block_type *block_data() noexcept { return get_view().blocks(); }
     _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { return get_view().num_blocks(); }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    packed_int_buffer &assign(RandomAccessIterT first, SentIterT last) {
+        auto max_val = details::find_max_value(first, last);
+        uint32_t width = std::max<uint32_t>(1, details::bits64::bit_width(max_val));
+        size_type size = details::iter_distance(first, last);
+        if (this->size() != size || this->width() != width) {
+            details::deallocate_packed_ints(get_alloc(), get_view());
+            get_view() = details::allocate_packed_ints(get_alloc(), width, size);
+        }
+
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+        return *this;
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    packed_int_buffer &assign(RandomAccessIterT first, SentIterT last, uint32_t width) {
+        size_type size = details::iter_distance(first, last);
+        if (this->size() != size || this->width() != width) {
+            details::deallocate_packed_ints(get_alloc(), get_view());
+            get_view() = details::allocate_packed_ints(get_alloc(), width, size);
+        }
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+        return *this;
+    }
+
+    packed_int_buffer &assign(std::initializer_list<value_type> initlist) {
+        return assign(initlist.begin(), initlist.end());
+    }
+
+    packed_int_buffer &assign(std::initializer_list<value_type> initlist, uint32_t width) {
+        return assign(initlist.begin(), initlist.end(), width);
+    }
 
     _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept { 
         return get_view().get_value(index); 
