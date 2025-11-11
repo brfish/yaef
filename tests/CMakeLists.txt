@@ -3,6 +3,7 @@ macro(yaef_add_test _name _srcfile)
   target_link_libraries(${_name} PRIVATE yaef::yaef Catch2::Catch2WithMain)
   target_include_directories(${_name} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   set_property(TARGET ${_name} PROPERTY CXX_STANDARD 11)
+  target_compile_options(${_name} PRIVATE -march=native)
 endmacro()
 
 # bit_view_test

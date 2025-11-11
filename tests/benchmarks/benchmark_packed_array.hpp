@@ -6,15 +6,15 @@
 #include "yaef/yaef.hpp"
 
 template<typename IntT>
-class packed_binary_search_benchmark : public benchmark<IntT, packed_binary_search_benchmark<IntT>> {
-    using base_type = benchmark<IntT, packed_binary_search_benchmark<IntT>>;
+class packed_array_search_benchmark : public benchmark<IntT, packed_array_search_benchmark<IntT>> {
+    using base_type = benchmark<IntT, packed_array_search_benchmark<IntT>>;
 public:
     using typename base_type::int_type;
     using typename base_type::size_type;
 
 public:
     const char *name() const noexcept {
-        return "packed_binary_search";
+        return "packed_array_search";
     }
 
     size_type size_in_bytes() const noexcept {
@@ -98,16 +98,16 @@ private:
 };
 
 template<typename IntT>
-class branchless_packed_binary_search_benchmark 
-    : public benchmark<IntT, branchless_packed_binary_search_benchmark<IntT>> {
-    using base_type = benchmark<IntT, branchless_packed_binary_search_benchmark<IntT>>;
+class packed_branchless_search_benchmark 
+    : public benchmark<IntT, packed_branchless_search_benchmark<IntT>> {
+    using base_type = benchmark<IntT, packed_branchless_search_benchmark<IntT>>;
 public:
     using typename base_type::int_type;
     using typename base_type::size_type;
 
 public:
     const char *name() const noexcept {
-        return "branchless_packed_binary_search";
+        return "packed_branchless_search";
     }
 
     size_type size_in_bytes() const noexcept {
@@ -175,5 +175,82 @@ private:
             len = half;
         }
         return base;
+    }
+};
+
+template<typename IntT>
+class packed_array_seq_search_benchmark 
+    : public benchmark<IntT, packed_array_seq_search_benchmark<IntT>> {
+    using base_type = benchmark<IntT, packed_array_seq_search_benchmark<IntT>>;
+public:
+    using typename base_type::int_type;
+    using typename base_type::size_type;
+
+public:
+    const char *name() const noexcept {
+        return "packed_array_seq_search";
+    }
+
+    size_type size_in_bytes() const noexcept {
+        return buf_.space_usage_in_bytes();
+    }
+
+    void build(const int_type *values, size_type size) {
+        int_type max_val = *std::max_element(values, values + size);
+        size_type width = yaef::details::bits64::bit_width(max_val);
+
+        buf_ = yaef::packed_int_buffer<>(width, size);
+        for (size_type i = 0; i < size; ++i) {
+            buf_.set_value(i, values[i]);
+        }
+    }
+
+    void random_access(const size_type *indices, size_type size) {
+        for (size_type i = 0; i < size; ++i) {
+            int_type val = buf_[indices[i]];
+            dont_optimize(val);
+        }
+    }
+    
+    void sequentially_access() {
+        for (size_type i = 0; i < buf_.size(); ++i) {
+            int_type val = buf_[i];
+            dont_optimize(val);
+        }
+    }
+
+    void lower_bound(const int_type *targets, size_type size) {
+        for (size_type i = 0; i < size; ++i) {
+            auto idx = seq_lower_bound(targets[i]);
+            dont_optimize(idx);
+        }
+    }
+
+    void upper_bound(const int_type *targets, size_type size) {
+        for (size_type i = 0; i < size; ++i) {
+            auto idx = seq_upper_bound(targets[i]);
+            dont_optimize(idx);
+        }
+    }
+
+private:
+    yaef::packed_int_buffer<> buf_;
+
+    size_type seq_lower_bound(int_type target) const {
+        for (size_t i = 0; i < buf_.size(); ++i) {
+            if (buf_.get_value(i) >= target) {
+                return i;
+            }
+        }
+        return buf_.size();
+    }
+
+    size_type seq_upper_bound(int_type target) const {
+        for (size_t i = 0; i < buf_.size(); ++i) {
+            if (buf_.get_value(i) > target) {
+                return i;
+            }
+        }
+        return buf_.size();
     }
 };

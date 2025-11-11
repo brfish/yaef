@@ -88,7 +88,7 @@ void run_benchmark(const benchmark_inputs<IntT> &inputs) {
             timer_beg = std::chrono::steady_clock::now();
             int_type dummy_sum = 0;
             for (size_t i = 0; i < inputs.search_targets.size(); ++i) {
-                dummy_sum += *list.lower_bound(inputs.search_targets[i]);
+                dummy_sum += list.index_of_lower_bound(inputs.search_targets[i]);
             }
             dont_optimize(dummy_sum);
             timer_end = std::chrono::steady_clock::now();
@@ -159,11 +159,11 @@ void run_benchmark(const benchmark_inputs<IntT> &inputs) {
 }
 
 int main(void) {
-    using int_type = uint64_t;
-    constexpr size_t NUM_INTS = 5000000;
+    using int_type = uint32_t;
+    constexpr size_t NUM_INTS = 500000;
 
     std::cout << "============== random ==============\n";
-    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, NUM_INTS * 32);
+    auto random_inputs = generate_random<int_type>(NUM_INTS, 0, NUM_INTS * 128);
     run_benchmark<NUM_INTS>(random_inputs);
 
     std::cout << "============== dense ==============\n";

@@ -973,6 +973,9 @@ _YAEF_ATTR_NODISCARD inline uint64_t idiv_ceil_nzero(uint64_t lhs, uint64_t rhs)
     return (lhs - 1) / rhs + 1;
 }
 
+class bit_view;
+class packed_int_view;
+
 class packed_int_view {
 public:
     using value_type = uint64_t;
@@ -1054,13 +1057,20 @@ public:
         }
     }
 
+    _YAEF_ATTR_NODISCARD bit_view to_bit_view() noexcept;
+
     _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept {
         _YAEF_ASSERT(index < size());
         const size_type bit_index = index * width();
         const size_type block_index = bit_index / BLOCK_WIDTH, 
                         block_offset = bit_index % BLOCK_WIDTH;
-
-#if _YAEF_INTRINSICS_HAVE_AVX2
+    
+#if _YAEF_INTRINSICS_HAVE_AVX2 && defined(__SIZEOF_INT128__) && __SIZEOF_INT128__ == 16
+        __uint128_t combined;
+        memcpy(&combined, blocks_ + block_index, sizeof(combined));
+        uint64_t result = static_cast<uint64_t>(combined >> block_offset);
+        return result & make_mask_lsb1(width_);
+#elif _YAEF_INTRINSICS_HAVE_AVX2
         __m128i words = _mm_loadu_si128(reinterpret_cast<const __m128i *>(blocks_ + block_index));
         __m128i shifted = _mm_srli_epi64(words, block_offset);
         __m128i carry = _mm_bsrli_si128(_mm_slli_epi64(words, BLOCK_WIDTH - block_offset), 8);
@@ -1181,6 +1191,9 @@ public:
     using block_type = uint64_t;
     static constexpr uint32_t BLOCK_WIDTH = sizeof(block_type) * CHAR_BIT;
 
+    struct dont_care_size_t { };
+    static constexpr dont_care_size_t dont_care_size{};
+
 public:
     bit_view() noexcept
         : blocks_(nullptr), num_bits_(0) { }
@@ -1189,6 +1202,9 @@ public:
 
     bit_view(block_type *blocks, size_type num_bits) noexcept
         : blocks_(blocks), num_bits_(num_bits) { }
+    
+    bit_view(block_type *blocks, dont_care_size_t) noexcept
+        : blocks_(blocks), num_bits_(std::numeric_limits<size_type>::max()) { }
 
     bit_view &operator=(const bit_view &) = default;
 
@@ -1231,6 +1247,8 @@ public:
         }
     }
 
+    _YAEF_ATTR_NODISCARD packed_int_view to_packed_int_view(uint32_t w) _YAEF_MAYBE_NOEXCEPT;
+
     _YAEF_ATTR_NODISCARD value_type get_bit(size_type index) const noexcept {
         _YAEF_ASSERT(index < size());
         auto info = locate_block(index);
@@ -1255,17 +1273,62 @@ public:
         *info.first = bits64::clear_bit(*info.first, info.second);
     }
 
-    void clear_all_bits() {
-        std::fill_n(blocks_, num_blocks(), 0);
-    }
-
     void set_all_bits() {
         if (_YAEF_UNLIKELY(num_blocks() == 0)) { return; }
         std::fill_n(blocks_, num_blocks() - 1, std::numeric_limits<block_type>::max());
         blocks_[num_blocks() - 1] = make_mask_lsb1(size() - (num_blocks() - 1) * BLOCK_WIDTH);
     }
 
+    void clear_all_bits() {
+        std::fill_n(blocks_, num_blocks(), 0);
+    }
 
+    void set_all_bits(size_type offset, size_type len) {
+        _YAEF_ASSERT(offset < size());
+        _YAEF_ASSERT(offset + len <= size());
+        do_modify_bits<true>(offset, len);
+    }
+
+    void clear_all_bits(size_type offset, size_type len) {
+        _YAEF_ASSERT(offset < size());
+        _YAEF_ASSERT(offset + len <= size());
+        do_modify_bits<false>(offset, len);
+    }
+
+    _YAEF_ATTR_NODISCARD uint64_t get_bits(size_type index, uint32_t w) const {
+        _YAEF_ASSERT(index < size());
+        _YAEF_ASSERT(index + w <= size());
+        _YAEF_ASSERT(w > 0 && w <= 64);
+        _YAEF_ASSUME(w > 0 && w <= 64);
+        const size_type block_index = index / BLOCK_WIDTH,
+                        bit_offset = index % BLOCK_WIDTH;
+        alignas(16) __uint128_t combined;
+        memcpy(&combined, blocks_ + block_index, sizeof(combined));
+        
+        uint64_t result = static_cast<uint64_t>(combined >> bit_offset);
+        const uint64_t mask = make_mask_lsb1(w);
+        return result & mask;
+    }
+
+    void set_bits(size_type index, uint32_t w, uint64_t bits) {
+        _YAEF_ASSERT(index < size());
+        _YAEF_ASSERT(index + w <= size());
+        _YAEF_ASSERT(w > 0 && w <= 64);
+        _YAEF_ASSUME(w > 0 && w <= 64);
+        const size_type block_index = index / BLOCK_WIDTH,
+                        bit_offset = index % BLOCK_WIDTH;
+
+        block_type val = bits;
+        if (bit_offset + w > BLOCK_WIDTH) {
+            const uint32_t num_low_bits = BLOCK_WIDTH - bit_offset;
+            block_type &block0 = blocks_[block_index], &block1 = blocks_[block_index + 1];
+            block0 = set_last_bits(block0, val, num_low_bits);
+            block1 = set_first_bits(block1, val >> num_low_bits, w - num_low_bits);
+        } else {
+            block_type &block = blocks_[block_index];
+            block = bits64::set_bits(block, bit_offset, val, w);
+        }
+    }
 
     void swap(bit_view &other) noexcept {
         std::swap(blocks_, other.blocks_);
@@ -1290,6 +1353,57 @@ private:
         const size_type block_index = index / BLOCK_WIDTH, block_offset = index % BLOCK_WIDTH;
         return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
     }
+
+    template<bool Op>
+    void do_modify_bits(size_t pos, size_t len) {
+        if (_YAEF_UNLIKELY(len == 0)) {
+            return;
+        }
+
+        if (pos % CHAR_BIT == 0 && len % CHAR_BIT == 0) {
+            uint8_t *start_addr = reinterpret_cast<uint8_t *>(blocks_) + (pos / CHAR_BIT);
+            size_type num_bytes = len / CHAR_BIT;
+            if _YAEF_CXX17_CONSTEXPR (Op) {
+                memset(start_addr, 0xFF, num_bytes);
+            } else {
+                memset(start_addr, 0, num_bytes);
+            }
+            return;
+        }
+        
+        const size_t start_block_index = pos / BLOCK_WIDTH,
+                     start_block_offset = pos % BLOCK_WIDTH;
+        const size_t end_pos = pos + len - 1;
+        const size_t end_block_index = end_pos / BLOCK_WIDTH,
+                     end_block_offset = end_pos % BLOCK_WIDTH;
+
+        if (start_block_index == end_block_index) {
+            const uint64_t mask = make_mask_lsb1(len) << start_block_offset;
+            if _YAEF_CXX17_CONSTEXPR (Op) {
+                blocks_[start_block_index] |= mask;
+            } else {
+                blocks_[start_block_index] &= ~mask;
+            }
+        } else {
+            const block_type head_mask = make_mask_msb1(start_block_offset);
+            if _YAEF_CXX17_CONSTEXPR (Op) {
+                blocks_[start_block_index] |= head_mask;
+            } else {
+                blocks_[start_block_index] &= ~head_mask;
+            }
+
+            const uint64_t middle_val = Op ? ~0ULL : 0ULL;
+            for (size_t i = start_block_index + 1; i < end_block_index; ++i) {
+                blocks_[i] = middle_val;
+            }
+            const uint64_t tail_mask = make_mask_lsb1(end_block_offset + 1);
+            if _YAEF_CXX17_CONSTEXPR (Op) {
+                blocks_[end_block_index] |= tail_mask;
+            } else {
+                blocks_[end_block_index] &= ~tail_mask;
+            }
+        }
+    }
 };
 
 _YAEF_ATTR_NODISCARD inline bool operator==(const bit_view &lhs, const bit_view &rhs) noexcept {
@@ -1307,6 +1421,17 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const bit_view &lhs, const bit_view 
     return !(lhs == rhs);
 }
 #endif
+
+inline bit_view packed_int_view::to_bit_view() noexcept {
+    return bit_view(blocks_, num_elems_ * width_);
+}
+
+inline packed_int_view bit_view::to_packed_int_view(uint32_t w) _YAEF_MAYBE_NOEXCEPT {
+    if (_YAEF_UNLIKELY(num_bits_ % w != 0)) {
+        _YAEF_THROW(std::invalid_argument("the number of bits must be a multiple of `w`"));
+    }
+    return packed_int_view(w, blocks_, num_bits_ / w);
+}
 
 class bits_stat_info;
 bits_stat_info stats_bits(const bit_view &) noexcept;

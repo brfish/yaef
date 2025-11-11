@@ -94,6 +94,16 @@ struct benchmark_inputs {
     static benchmark_inputs from_datagen(int_type min, int_type max, size_type num) {
         return from_datagen(min, max, num, yaef::test_utils::make_random_seed());
     }
+
+    static benchmark_inputs from_dategen_unique(int_type min, int_type max, size_type num, uint64_t seed) {
+        yaef::test_utils::uniform_int_generator<int_type> values_gen{min, max, seed};
+        auto values = values_gen.make_sorted_set(num);
+        return from_values(std::move(values));
+    }
+
+    static benchmark_inputs from_datagen_unique(int_type min, int_type max, size_type num) {
+        return from_datagen_unique(min, max, num, yaef::test_utils::make_random_seed());
+    }
 };
 
 template<typename IntT, typename Impl>

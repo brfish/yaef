@@ -72,8 +72,8 @@ public:
     }
 
     std::vector<value_type> make_set(size_type num) override {
-        const size_type num_candidates = this->max() - this->min() + 1;
-        if (num_candidates < num) {
+        const size_type num_candidates = this->max() - this->min();
+        if (num_candidates < num - 1) {
             throw std::invalid_argument{
                 "The size of the set must be less than or equal to the size of the value range."};
         }
