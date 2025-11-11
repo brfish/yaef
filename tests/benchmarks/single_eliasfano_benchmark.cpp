@@ -88,7 +88,7 @@ void run_benchmark(const benchmark_inputs<IntT> &inputs) {
             timer_beg = std::chrono::steady_clock::now();
             int_type dummy_sum = 0;
             for (size_t i = 0; i < inputs.search_targets.size(); ++i) {
-                dummy_sum += list.index_of_lower_bound(inputs.search_targets[i]);
+                dummy_sum += list.lower_bound(inputs.search_targets[i]).to_index();
             }
             dont_optimize(dummy_sum);
             timer_end = std::chrono::steady_clock::now();
@@ -107,7 +107,7 @@ void run_benchmark(const benchmark_inputs<IntT> &inputs) {
             timer_beg = std::chrono::steady_clock::now();
             int_type dummy_sum = 0;
             for (size_t i = 0; i < inputs.search_targets.size(); ++i) {
-                dummy_sum += *list.upper_bound(inputs.search_targets[i]);
+                dummy_sum += list.upper_bound(inputs.search_targets[i]).to_index();
             }
             dont_optimize(dummy_sum);
             timer_end = std::chrono::steady_clock::now();
