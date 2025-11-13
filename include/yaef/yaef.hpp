@@ -1,4 +1,4 @@
-// Copyright (c) 2024 brfish
+// Copyright (c) 2025 brfish
 // 
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -338,6 +338,14 @@ using remove_cvref = std::remove_cv<typename std::remove_reference<T>::type>;
 #   endif
 
 template<typename T, typename = void>
+struct is_forward_iter : std::false_type { };
+
+template<typename T>
+struct is_forward_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>>
+    : std::is_base_of<std::forward_iterator_tag,
+                      typename std::iterator_traits<T>::iterator_category> { };
+
+template<typename T, typename = void>
 struct is_bidirectional_iter : std::false_type { };
 
 template<typename T>
@@ -350,8 +358,8 @@ struct is_random_access_iter : std::false_type { };
 
 template<typename T>
 struct is_random_access_iter<T, details::void_t<typename std::iterator_traits<T>::iterator_category>> 
-    : public std::is_base_of<std::random_access_iterator_tag, 
-                             typename std::iterator_traits<T>::iterator_category> { };
+    : std::is_base_of<std::random_access_iterator_tag, 
+                      typename std::iterator_traits<T>::iterator_category> { };
 
 template<typename Cond1, typename Cond2>
 struct traits_or : std::integral_constant<bool, Cond1::value || Cond2::value> { };
@@ -392,11 +400,35 @@ struct iterator_value_type_constraint<T, Constraint, void_t<typename std::iterat
     : std::integral_constant<bool, Constraint<typename std::iterator_traits<T>::value_type>::value> { };
 
 #if _YAEF_USE_CXX_CONCEPTS
+#   define _YAEF_REQUIRES_FORWARD_ITER(_iter, _sent, _val_constraint) \
+    template<std::forward_iterator _iter, \
+             std::sized_sentinel_for<_iter> _sent> \
+    requires (_val_constraint<std::iter_value_t<_iter>>::value)
+
+#   define _YAEF_REQUIRES_BIDIR_ITER(_iter, _sent, _val_constraint) \
+    template<std::bidirectional_iterator _iter, \
+             std::sized_sentinel_for<_iter> _sent> \
+    requires (_val_constraint<std::iter_value_t<_iter>>::value)
+
 #   define _YAEF_REQUIRES_RANDOM_ACCESS_ITER(_iter, _sent, _val_constraint) \
     template<std::random_access_iterator _iter, \
              std::sized_sentinel_for<_iter> _sent> \
     requires (_val_constraint<std::iter_value_t<_iter>>::value)
 #else
+#   define _YAEF_REQUIRES_FORWARD_ITER(_iter, _sent, _val_constraint) \
+    template<typename _iter, typename _sent, \
+             typename = typename std::enable_if< \
+                details::is_forward_iter<_iter>::value && \
+                std::is_same<_iter, _sent>::value && \
+                details::iterator_value_type_constraint<_iter, _val_constraint>::value>::type>
+
+#   define _YAEF_REQUIRES_BIDIR_ITER(_iter, _sent, _val_constraint) \
+    template<typename _iter, typename _sent, \
+             typename = typename std::enable_if< \
+                details::is_bidirectional_iter<_iter>::value && \
+                std::is_same<_iter, _sent>::value && \
+                details::iterator_value_type_constraint<_iter, _val_constraint>::value>::type>
+
 #   define _YAEF_REQUIRES_RANDOM_ACCESS_ITER(_iter, _sent, _val_constraint) \
     template<typename _iter, typename _sent, \
              typename = typename std::enable_if< \
@@ -426,6 +458,62 @@ find_max_value(InputIterT first, SentIterT last) {
                                            typename details::remove_cvref<SentIterT>::type>::value);
     return *std::max_element(first, last);
 #endif
+}
+
+template<typename ForwardIterT, typename SentIterT>
+_YAEF_ATTR_NODISCARD inline bool is_sorted(ForwardIterT first, SentIterT last) {
+#if _YAEF_USE_STL_RANGES_ALG
+    return std::ranges::is_sorted(first, last);
+#else
+    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename details::remove_cvref<ForwardIterT>::type,
+                                           typename details::remove_cvref<SentIterT>::type>::value);
+    return std::is_sorted(first, last);
+#endif
+}
+
+template<typename RandomAccessIter, typename T>
+_YAEF_ATTR_NODISCARD inline RandomAccessIter branchless_lower_bound(RandomAccessIter first, size_t n, T target) {
+    RandomAccessIter base = first;
+    size_t len = n;
+    while (len > 0) {
+        size_t half = len / 2;
+        base += (base[half] < target) * (len - half);
+        len = half;
+    }
+    return base;
+}
+
+template<typename RandomAccessIter, typename T>
+_YAEF_ATTR_NODISCARD inline RandomAccessIter branchless_upper_bound(RandomAccessIter first, size_t n, T target) {
+    RandomAccessIter base = first;
+    size_t len = n;
+    while (len > 0) {
+        size_t half = len / 2;
+        base += (base[half] <= target) * (len - half);
+        len = half;
+    }
+    return base;
+}
+
+template<typename AllocT>
+void checked_swap_alloc_impl(AllocT &lhs, AllocT &rhs, std::true_type) noexcept {
+    std::swap(lhs, rhs);
+}
+
+template<typename AllocT>
+void checked_swap_alloc_impl(AllocT &lhs, AllocT &rhs, std::false_type) 
+    noexcept(std::allocator_traits<AllocT>::is_always_equal::value) {
+#ifdef NDEBUG
+    _YAEF_UNUSED(lhs);
+    _YAEF_UNUSED(rhs);
+#endif
+    _YAEF_ASSERT(lhs == rhs);
+}
+
+template<typename AllocT>
+void checked_swap_alloc(AllocT &lhs, AllocT &rhs) {
+    using alloc_traits = std::allocator_traits<AllocT>;
+    checked_swap_alloc_impl(lhs, rhs, typename alloc_traits::propagate_on_container_swap{});
 }
 
 template<typename T, typename ...ArgTs>
@@ -1710,6 +1798,12 @@ public:
     using is_always_equal = std::true_type;
 #endif
 public:
+    aligned_allocator() = default;
+    aligned_allocator(const aligned_allocator &) = default;
+
+    template<typename U, size_t A>
+    aligned_allocator(aligned_allocator<U, A>) { }
+
     _YAEF_ATTR_NODISCARD T *allocate(size_type n) _YAEF_MAYBE_NOEXCEPT {
         if (_YAEF_UNLIKELY(n == 0)) {
             return nullptr;
@@ -2051,9 +2145,27 @@ class value_with_allocator_pair : private AllocT {
 public:
     value_with_allocator_pair() = default;
 
+    value_with_allocator_pair(const value_with_allocator_pair &other)
+        : AllocT(static_cast<const AllocT>(other)), value_(other.value()) { }
+
+    value_with_allocator_pair(value_with_allocator_pair &&other) noexcept
+        : AllocT(static_cast<AllocT &&>(std::move(other))), value_(std::move(other.value())) { }
+
     template<typename U = T, typename AllocU = AllocT>
     value_with_allocator_pair(U &&v, AllocU &&a)
         : AllocT(std::forward<AllocU>(a)), value_(std::forward<U>(v)) { }
+
+    value_with_allocator_pair &operator=(const value_with_allocator_pair &other) {
+        alloc() = other.alloc();
+        value_ = std::move(other.value_);
+        return *this;
+    }
+
+    value_with_allocator_pair &operator=(value_with_allocator_pair &&other) {
+        alloc() = std::move(other.alloc());
+        value_ = std::move(other.value_);
+        return *this;
+    }
 
     _YAEF_ATTR_NODISCARD const T &value() const noexcept { return value_; }
     _YAEF_ATTR_NODISCARD T &value() noexcept { return value_; }
@@ -2082,9 +2194,9 @@ public:
                 : alloc_(alloc), num_zeros_or_ones_(num_zeros_or_ones), num_scanned_(0), 
                   last_sample_(0), max_uniform_subsample_(0), max_each_one_subsample_(0) {
                 if (num_zeros_or_ones != 0) {
-                    size_t num_samples = bits64::idiv_ceil_nzero(num_zeros_or_ones, position_samples::SAMPLE_RATE) + 1;
+                    size_t get_num_samples = bits64::idiv_ceil_nzero(num_zeros_or_ones, position_samples::SAMPLE_RATE) + 1;
                     const uint32_t width = bits64::bit_width(num_bits);
-                    samples_store_ = allocate_packed_ints(alloc, width, num_samples);
+                    samples_store_ = allocate_packed_ints(alloc, width, get_num_samples);
                 }
             }
 
@@ -2790,7 +2902,7 @@ public:
     eliasfano_list(eliasfano_list &&other) noexcept {
         high_bits_ = details::exchange(other.high_bits_, high_bits_type{});
         get_low_bits() = details::exchange(other.get_low_bits(), low_bits_type{});
-        swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
         min_ = details::exchange(other.min_, std::numeric_limits<value_type>::max());
         max_ = details::exchange(other.max_, std::numeric_limits<value_type>::min());
         has_duplicates_ = details::exchange(other.has_duplicates_, false);
@@ -3027,7 +3139,7 @@ public:
         }
         high_bits_.swap(other.high_bits_);
         get_low_bits().swap(other.get_low_bits());
-        swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
         std::swap(min_, other.min_);
         std::swap(max_, other.max_);
         std::swap(has_duplicates_, other.has_duplicates_);
@@ -3088,15 +3200,10 @@ private:
                                        std::numeric_limits<value_type>::min()};
             }
 
-#if _YAEF_USE_STL_RANGES_ALG
-            if (!std::ranges::is_sorted(first, last)) {
+            if (!details::is_sorted(first, last)) {
                 return sorted_seq_info{};
             }
-#else
-            if (!std::is_sorted(first, last)) {
-                return sorted_seq_info{};
-            }
-#endif
+
             return sorted_seq_info{
                 true,
                 details::check_duplicate(first, last),
@@ -3110,11 +3217,8 @@ private:
         _YAEF_ATTR_NODISCARD static sorted_seq_info 
         unchecked_create(RandomAccessIterT first, SentIterT last) {
             _YAEF_ASSERT(first <= last);
-#if _YAEF_USE_STL_RANGES_ALG
-            _YAEF_ASSERT(std::ranges::is_sorted(first, last));
-#else
-            _YAEF_ASSERT(std::is_sorted(first, last));
-#endif
+            _YAEF_ASSERT(details::is_sorted(first, last));
+
             return sorted_seq_info{
                 true,
                 details::check_duplicate(first, last),
@@ -3191,18 +3295,6 @@ private:
 
     _YAEF_ATTR_NODISCARD unsigned_value_type to_stored_value(value_type v) const noexcept {
         return static_cast<unsigned_value_type>(v) - static_cast<unsigned_value_type>(min_);
-    }
-
-    void swap_alloc_impl(allocator_type &other_alloc, std::true_type) noexcept {
-        std::swap(get_alloc(), other_alloc);        
-    }
-
-    void swap_alloc_impl(allocator_type &other_alloc, std::false_type) 
-        noexcept(alloc_traits::is_always_equal::value) {
-#ifdef NDEBUG
-        _YAEF_UNUSED(other_alloc);
-#endif
-        _YAEF_ASSERT(get_alloc() == other_alloc);
     }
 
     _YAEF_ATTR_NODISCARD const_iterator make_iter(size_type high_bit_offset, size_type index) const noexcept {
@@ -3374,7 +3466,7 @@ public:
         swap_low_width_and_num_buckets_impl(other);
         min_max_and_alloc_.value() = details::exchange(
             other.min_max_and_alloc_.value(), std::pair<value_type, value_type>{});
-        swap_alloc_impl(typename alloc_traits::propagate_on_container_swap{});
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
         has_duplicates_ = details::exchange(other.has_duplicates_, false);
     }
 
@@ -3419,7 +3511,7 @@ public:
             _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the iterators are invalid"});
         }
 
-        if (!std::is_sorted(first, last)) {
+        if (!details::is_sorted(first, last)) {
             _YAEF_THROW(std::invalid_argument{"eliasfano_sequence::eliasfano_sequence: the input data is not sorted"});
         }
 
@@ -3527,7 +3619,7 @@ public:
         std::swap(low_bits_mem_, other.low_bits_mem_);
         swap_low_width_and_num_buckets_impl(other);
         std::swap(min_max_and_alloc_.value(), other.min_max_and_alloc_.value());
-        swap_alloc_impl(other.get_alloc(), typename alloc_traits::propagate_on_container_swap{});
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
         std::swap(has_duplicates_, other.has_duplicates_);
     }
 
@@ -3682,18 +3774,6 @@ private:
         high_bits_mem_ = low_bits_mem_ = nullptr;
         low_width_ = num_buckets_ = 0;
         min_max_and_alloc_.value() = std::pair<value_type, value_type>{};
-    }
-
-    void swap_alloc_impl(allocator_type &other_alloc, std::true_type) noexcept {
-        std::swap(get_alloc(), other_alloc);        
-    }
-    
-    void swap_alloc_impl(allocator_type &other_alloc, std::false_type) 
-        noexcept(alloc_traits::is_always_equal::value) {
-#ifdef NDEBUG
-        _YAEF_UNUSED(other_alloc);
-#endif
-        _YAEF_ASSERT(get_alloc() == other_alloc);
     }
 
     // because bitfields cannot be bound to reference, std::swap cannot be used
@@ -4525,6 +4605,407 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_buffer<AllocT> &lhs
 }
 #endif
 
+enum class sample_strategy {
+    cardinality, universe
+};
+
+template<sample_strategy Strategy>
+struct defaule_sample_rate;
+
+template<>
+struct defaule_sample_rate<sample_strategy::cardinality> 
+    : std::integral_constant<size_t, 256> { };
+
+template<>
+struct defaule_sample_rate<sample_strategy::universe> 
+    : std::integral_constant<size_t, std::numeric_limits<uint16_t>::max()> { };
+
+template<typename T, sample_strategy Strategy = sample_strategy::cardinality, 
+         size_t SampleRate = defaule_sample_rate<Strategy>::value,
+         typename AllocT = details::aligned_allocator<T, 32>>
+class sparse_sampled_list {
+    friend struct details::serialize_friend_access;
+
+    using alloc_traits       = std::allocator_traits<AllocT>;
+    using byte_alloc         = typename alloc_traits::template rebind_alloc<uint8_t>;
+    using byte_alloc_traits  = std::allocator_traits<byte_alloc>;
+    using is_cardinality_tag = std::integral_constant<sample_strategy, sample_strategy::cardinality>;
+    using is_universe_tag    = std::integral_constant<sample_strategy, sample_strategy::universe>;
+    using strategy_tag       = std::integral_constant<sample_strategy, Strategy>;
+public:
+    using value_type      = T;
+    using size_type       = size_t;
+    using const_pointer   = const T *;
+    using pointer         = T *;
+    using const_reference = const T &;
+    using reference       = T &;
+    using const_iterator  = const T *;
+    using iterator        = const_iterator;
+    using allocator_type  = AllocT;
+
+    static constexpr sample_strategy SAMPLE_STRATEGY = Strategy;
+    static constexpr size_type SAMPLE_RATE = SampleRate;
+
+public:
+    sparse_sampled_list()
+        : num_samples_and_alloc_(0, allocator_type{}),
+          samples_(nullptr), size_(0), data_(nullptr) { }
+
+    sparse_sampled_list(const sparse_sampled_list &other)
+        : num_samples_and_alloc_(other.get_num_samples(), other.get_alloc()),
+          samples_(nullptr), size_(other.size_), data_(nullptr) {
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(other.data_, size_, data_);
+        copy_samples_from(other, strategy_tag{});
+    }
+
+    sparse_sampled_list(sparse_sampled_list &&other) noexcept
+        : num_samples_and_alloc_(details::exchange(other.get_num_samples(), 0), allocator_type{}),
+          samples_(details::exchange(other.samples_, nullptr)),
+          size_(details::exchange(other.size_, 0)),
+          data_(details::exchange(other.data_, nullptr)) {
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
+    }
+
+    _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
+    sparse_sampled_list(ForwardIter first, SentIterT last) {
+        if (_YAEF_UNLIKELY(!details::is_sorted(first, last))) {
+            _YAEF_THROW(std::invalid_argument(
+                "sparse_sampled_list::sparse_sampled_list: the input data is not sorted"));
+        }
+
+        size_ = details::iter_distance(first, last);
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(first, size_, data_);
+        build_samples(strategy_tag{});
+    }
+
+    _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
+    sparse_sampled_list(from_sorted_t, ForwardIter first, SentIterT last) {
+        size_ = details::iter_distance(first, last);
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(first, size_, data_);
+        build_samples(strategy_tag{});
+    }
+
+    sparse_sampled_list(std::initializer_list<value_type> initlist)
+        : sparse_sampled_list(initlist.begin(), initlist.end()) { }
+
+    sparse_sampled_list(from_sorted_t, std::initializer_list<value_type> initlist)
+        : sparse_sampled_list(from_sorted, initlist.begin(), initlist.end()) { }
+
+    ~sparse_sampled_list() {
+        do_deallocate();
+    }
+
+    sparse_sampled_list &operator=(const sparse_sampled_list &other) {
+        do_deallocate();
+        copy_from(other);
+        return *this;
+    }
+
+    sparse_sampled_list &operator=(sparse_sampled_list &&other) noexcept {
+        samples_ = details::exchange(other.samples_, nullptr);
+        get_num_samples() = details::exchange(other.get_num_samples(), 0);
+        data_ = details::exchange(other.data_, nullptr);
+        size_ = details::exchange(other.size_, 0);
+        return *this;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return size_; }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size_ == 0; }
+    _YAEF_ATTR_NODISCARD size_type num_samples() const noexcept { return get_num_samples(); }
+    _YAEF_ATTR_NODISCARD const_pointer data() const noexcept { return data_; }
+    _YAEF_ATTR_NODISCARD allocator_type get_allocator() const { return allocator_type(get_alloc()); }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const {
+        return sizeof(value_type) * get_num_samples() + sizeof(value_type) * size_;
+    }
+
+    _YAEF_ATTR_NODISCARD value_type min() const _YAEF_MAYBE_NOEXCEPT {
+        if (_YAEF_UNLIKELY(size_ == 0)) {
+            _YAEF_THROW(std::out_of_range("sparse_sampled_list::max: the list is empty"));
+        }
+        return data_[0];
+    }
+
+    _YAEF_ATTR_NODISCARD value_type max() const _YAEF_MAYBE_NOEXCEPT {
+        if (_YAEF_UNLIKELY(size_ == 0)) {
+            _YAEF_THROW(std::out_of_range("sparse_sampled_list::max: the list is empty"));
+        }
+        return data_[size_ - 1];
+    }
+
+    _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
+        if (_YAEF_UNLIKELY(index >= size_)) {
+            _YAEF_THROW(std::out_of_range("sparse_sampled_list::at: the index is out of range"));
+        }
+        return data_[index];
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const _YAEF_MAYBE_NOEXCEPT { 
+        return at(index); 
+    }
+
+    _YAEF_ATTR_NODISCARD const_iterator lower_bound(value_type target) const {
+        return data_ + index_of_lower_bound(target);
+    }
+
+    _YAEF_ATTR_NODISCARD const_iterator upper_bound(value_type target) const {
+        return data_ + index_of_upper_bound(target);
+    }
+
+    _YAEF_ATTR_NODISCARD size_type index_of_lower_bound(value_type target) const {
+        if (_YAEF_UNLIKELY(target > max())) {
+            return size_;
+        }
+        if (_YAEF_UNLIKELY(target <= min())) {
+            return 0;
+        }
+
+        return do_search_lower_bound(target, strategy_tag{});
+    }
+
+    _YAEF_ATTR_NODISCARD size_type index_of_upper_bound(value_type target) const {
+        if (_YAEF_UNLIKELY(target >= max())) {
+            return size_;
+        }
+        if (_YAEF_UNLIKELY(target < min())) {
+            return 0;
+        }
+
+        return do_search_upper_bound(target, strategy_tag{});
+    }
+
+    _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
+    sparse_sampled_list &assign(ForwardIter first, SentIterT last) {
+        if (!_YAEF_UNLIKELY(details::is_sorted(first, last))) {
+            _YAEF_THROW(std::invalid_argument(
+                "sparse_sampled_list::assign: the input data is not sorted"));
+        }
+
+        do_deallocate();
+        size_ = details::iter_distance(first, last);
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(first, size_, data_);
+        build_samples(strategy_tag{});
+        return *this;
+    }
+
+    _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
+    sparse_sampled_list &assign(from_sorted_t, ForwardIter first, SentIterT last) {
+        do_deallocate();
+        size_ = details::iter_distance(first, last);
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(first, size_, data_);
+        build_samples(strategy_tag{});
+        return *this;
+    }
+
+    sparse_sampled_list &assign(std::initializer_list<value_type> initlist) {
+        return assign(initlist.begin(), initlist.end());
+    }
+
+    sparse_sampled_list &assign(from_sorted_t, std::initializer_list<value_type> initlist) {
+        return assign(from_sorted, initlist.begin(), initlist.end());
+    }
+
+    void swap(sparse_sampled_list &other) noexcept {
+        std::swap(get_num_samples(), other.get_num_samples());
+        details::checked_swap_alloc(get_alloc(), get_alloc());
+        std::swap(samples_, other.samples_);
+        std::swap(data_, other.data_);
+        std::swap(size_, other.size_);
+    }
+
+private:
+    using num_samples_and_alloc = details::value_with_allocator_pair<size_type, allocator_type>;
+
+    num_samples_and_alloc  num_samples_and_alloc_;
+    uint8_t               *samples_;
+    size_type              size_;
+    pointer                data_;
+
+    _YAEF_ATTR_NODISCARD const size_type &get_num_samples() const noexcept { return num_samples_and_alloc_.value(); }
+    _YAEF_ATTR_NODISCARD size_type &get_num_samples() { return num_samples_and_alloc_.value(); }
+    _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const { return num_samples_and_alloc_.alloc(); }
+    _YAEF_ATTR_NODISCARD allocator_type &get_alloc() { return num_samples_and_alloc_.alloc(); }
+
+    error_code do_serialize(details::serializer &ser) const {
+        if (!ser.write(get_num_samples())) { return error_code::serialize_io; }
+        
+        if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::cardinality) {
+            if (!ser.write_bytes(samples_, sizeof(value_type) * get_num_samples())) { return error_code::serialize_io; }
+        } else if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::universe) {
+            if (!ser.write_bytes(samples_, sizeof(size_type) * get_num_samples())) { return error_code::serialize_io; }
+        }
+
+        if (!ser.write(size_)) { return error_code::serialize_io; }
+        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(data_), sizeof(value_type) * size_)) {
+            return error_code::serialize_io;
+        }
+        return error_code::success;
+    }
+    
+    error_code do_deserialize(details::deserializer &deser) {
+        if (!deser.read(get_num_samples())) { return error_code::deserialize_io; }
+    
+        byte_alloc balloc(get_alloc());
+        if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::cardinality) {
+            samples_ = byte_alloc_traits::allocate(balloc, sizeof(value_type) * get_num_samples());
+            if (!deser.read_bytes(samples_, sizeof(value_type) * get_num_samples())) { return error_code::serialize_io; }
+        } else if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::universe) {
+            samples_ = byte_alloc_traits::allocate(balloc, sizeof(size_type) * get_num_samples());
+            if (!deser.read_bytes(samples_, sizeof(size_type) * get_num_samples())) { return error_code::serialize_io; }
+        }
+
+        if (!deser.read(size_)) { return error_code::serialize_io; }
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(data_), sizeof(value_type) * size_)) {
+            return error_code::serialize_io;
+        }
+        return error_code::success;
+    }
+
+    void do_deallocate() {
+        if (samples_) {
+            byte_alloc balloc(get_alloc());
+            if (SAMPLE_STRATEGY == sample_strategy::cardinality) {
+                byte_alloc_traits::deallocate(balloc, samples_, sizeof(value_type) * get_num_samples());
+            } else {
+                byte_alloc_traits::deallocate(balloc, samples_, sizeof(size_type) * get_num_samples());                
+            }
+            samples_ = nullptr;
+            get_num_samples() = 0;
+        }
+        if (data_) {
+            alloc_traits::deallocate(get_alloc(), data_, size_);
+            data_ = nullptr;
+            size_ = 0;
+        }
+    }
+
+    void copy_samples_from(const sparse_sampled_list &other, is_cardinality_tag) {
+        byte_alloc balloc(get_alloc());
+        samples_ = byte_alloc_traits::allocate(balloc, sizeof(value_type) * get_num_samples());
+        std::uninitialized_copy_n(other.samples_, sizeof(value_type) * get_num_samples(), samples_);
+    }
+
+    void copy_samples_from(const sparse_sampled_list &other, is_universe_tag) {
+        byte_alloc balloc(get_alloc());
+        samples_ = byte_alloc_traits::allocate(balloc, sizeof(size_type) * get_num_samples());
+        std::uninitialized_copy_n(other.samples_, sizeof(size_type) * get_num_samples(), samples_);
+    }
+
+    void copy_from(const sparse_sampled_list &other) {
+        get_num_samples() = other.get_num_samples();
+        size_ = other.size_;
+        get_alloc() = other.get_alloc();
+
+        data_ = alloc_traits::allocate(get_alloc(), size_);
+        std::uninitialized_copy_n(other.data_, size_, data_);
+
+        copy_samples_from(other, strategy_tag{});
+    }
+
+    void build_eytzinger(value_type *out, size_type &reader_idx, size_type writer_idx) {
+        if (writer_idx >= get_num_samples()) {
+            return;
+        }
+        size_type left_child = 2 * writer_idx + 1;
+        if (left_child < get_num_samples()) {
+            build_eytzinger(out, reader_idx, left_child);
+        }
+        out[writer_idx] = data_[reader_idx * SAMPLE_RATE]; 
+        ++reader_idx;
+        size_type right_child = 2 * writer_idx + 2;
+        if (right_child < get_num_samples()) {
+            build_eytzinger(out, reader_idx, right_child);
+        }
+    }
+
+    void build_samples(is_cardinality_tag) {
+        get_num_samples() = details::bits64::idiv_ceil(size_, SAMPLE_RATE);
+        
+        byte_alloc balloc(get_alloc());
+        samples_ = byte_alloc_traits::allocate(balloc, sizeof(value_type) * get_num_samples());
+        value_type *samples = reinterpret_cast<value_type *>(samples_);
+        for (size_type i = 0; i < get_num_samples(); ++i) {
+            samples[i] = data_[i * SAMPLE_RATE];
+        }
+    }
+
+    void build_samples(is_universe_tag) {
+        const value_type u = max() - min();
+        get_num_samples() = details::bits64::idiv_ceil(u, SAMPLE_RATE) + 1;
+
+        byte_alloc balloc(get_alloc());
+        samples_ = byte_alloc_traits::allocate(balloc, sizeof(size_type) * get_num_samples());
+        size_type *samples = reinterpret_cast<size_type *>(samples_);
+
+        std::uninitialized_fill_n(samples, get_num_samples(), 0);
+        for (size_type i = 0; i < size_; ++i) {
+            ++samples[(data_[i] - min()) / SAMPLE_RATE];
+        }
+        samples[get_num_samples() - 1] = size_;
+
+        size_type prefix = 0;
+        for (size_type i = 0; i < get_num_samples() - 1; ++i) {
+            size_type cnt = samples[i];
+            samples[i] = prefix;
+            prefix += cnt;
+        }
+    }
+
+    // search lower bound with cardinality partitioned samples
+    _YAEF_ATTR_NODISCARD size_type do_search_lower_bound(value_type target, is_cardinality_tag) const {
+        const value_type *samples = reinterpret_cast<const value_type *>(samples_);
+
+        const value_type *iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
+        size_type sample_index = iter - samples;
+
+        const size_type partition_size = size_ - sample_index * SAMPLE_RATE;
+        iter = details::branchless_lower_bound(data_ + sample_index * SAMPLE_RATE, partition_size, target);
+        return iter - data_;
+    }
+
+    // search lower bound with cardinality partitioned samples
+    _YAEF_ATTR_NODISCARD size_type do_search_upper_bound(value_type target, is_cardinality_tag) const {
+        const value_type *samples = reinterpret_cast<const value_type *>(samples_);
+
+        const value_type *iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
+        size_type sample_index = iter - samples;
+
+        const size_type partition_size = size_ - sample_index * SAMPLE_RATE;
+        iter = details::branchless_upper_bound(data_ + sample_index * SAMPLE_RATE, partition_size, target);
+        return iter - data_;
+    }
+
+    // search lower bound with universe partitioned samples
+    _YAEF_ATTR_NODISCARD size_type do_search_lower_bound(value_type target, is_universe_tag) const {
+        size_type sample_index = (target - min()) / SAMPLE_RATE;
+        
+        const size_type *samples = reinterpret_cast<const size_type *>(samples_);
+        size_type first = samples[sample_index], 
+                  last = samples[sample_index + 1];
+        value_type *iter = details::branchless_lower_bound(data_ + first, last - first, target);
+        size_type idx = iter - data_;
+        return idx;
+    }
+
+    // search upper bound with universe partitioned samples
+    _YAEF_ATTR_NODISCARD size_type do_search_upper_bound(value_type target, is_universe_tag) const {
+        size_type sample_index = (target - min()) / SAMPLE_RATE;
+        
+        const size_type *samples = reinterpret_cast<const size_type *>(samples_);
+        size_type first = samples[sample_index], 
+                  last = samples[sample_index + 1];
+        value_type *iter = details::branchless_upper_bound(data_ + first, last - first, target);
+        size_type idx = iter - data_;
+        return idx;
+    }
+};
+
 template<typename T>
 inline error_code serialize_to_buf(const T &x, uint8_t *buf, size_t buf_size) {
     auto ser = details::serializer{details::make_unique_obj<details::membuf_writer_context>(buf, buf_size)};
@@ -4676,7 +5157,7 @@ encode_eliasfano(RandomAccessIterT first, RandomAccessIterT last, uint32_t low_w
     if (_YAEF_UNLIKELY(first > last)) {
         return details::make_encode_err(low_bits_buf, high_bits_buf, error_code::invalid_argument);
     }
-    if (_YAEF_UNLIKELY(!std::is_sorted(first, last))) {
+    if (_YAEF_UNLIKELY(!details::is_sorted(first, last))) {
         return details::make_encode_err(low_bits_buf, high_bits_buf, error_code::not_sorted);
     }
     if (_YAEF_UNLIKELY(low_width > 64)) {

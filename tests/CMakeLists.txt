@@ -29,3 +29,6 @@ yaef_add_test(packed_int_view_test "packed_int_view_test.cpp")
 
 # selectable_dense_bits_test
 yaef_add_test(selectable_dense_bits_test "selectable_dense_bits_test.cpp")
+
+# sparse_sampled_list_test
+yaef_add_test(sparse_sampled_list_test "sparse_sampled_list_test.cpp")
