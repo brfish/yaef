@@ -9,12 +9,12 @@ using hyb_list = yaef::hybrid_list<uint32_t, yaef::details::aligned_allocator<ui
     yaef::hybrid_methods::bitmap,
     yaef::hybrid_methods::fixed,
     yaef::hybrid_methods::eliasfano,
-    yaef::hybrid_methods::fixed_gap
+    yaef::hybrid_methods::eliasgamma_unique_gap
 >;
 
 TEST_CASE("hybrid_list_test", "[public]") {
-    yaef::test_utils::uniform_int_generator<uint32_t> int_gen(0, std::numeric_limits<uint32_t>::max() - 1024, 114514);
-    auto data = int_gen.make_sorted_list(25000 * 20);
+    yaef::test_utils::uniform_int_generator<uint32_t> int_gen(0, 25000 * 80, 114514);
+    auto data = int_gen.make_sorted_set(25000 * 20);
 
     for (size_t i = 0; i < 256; ++i) {
         data[i] = i;
@@ -36,7 +36,7 @@ TEST_CASE("hybrid_list_test", "[public]") {
         }
     }
 
-    SECTION("index of lowerbound") {
+    SECTION("index of lower bound") {
         auto list = hyb_list(yaef::from_sorted, data.begin(), data.end());
 
         uint32_t rnd_min = data.front() >= 50 ? data.front() - 50 : 0;

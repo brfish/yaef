@@ -1079,11 +1079,12 @@ _YAEF_ATTR_NODISCARD inline uint64_t idiv_ceil_nzero(uint64_t lhs, uint64_t rhs)
     return (lhs - 1) / rhs + 1;
 }
 
+// return count of 1s in preceding k bits 
 _YAEF_ATTR_NODISCARD inline size_t 
 popcount_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
     constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
 
-    k = std::min(k, num_blocks * BLOCK_WIDTH - 1) + 1;
+    k = std::min(k, num_blocks * BLOCK_WIDTH);
     const size_t num_skipped_blocks = k / BLOCK_WIDTH,
                  num_rem_bits = k % BLOCK_WIDTH;
     
@@ -1097,12 +1098,102 @@ popcount_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
     return num_ones;
 }
 
+#if _YAEF_INTRINSICS_HAVE_AVX512
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+popcount_blocks_512_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    k = std::min(k, num_blocks * BLOCK_WIDTH);
+    
+    __m512i loaded_vec;
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vec = _mm512_load_si512(blocks);
+    } else {
+        loaded_vec = _mm512_loadu_si512(blocks);
+    }
+
+    __m512i popcnts_vec =  _mm512_popcnt_epi64(loaded_vec);
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 1));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 2));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 4));
+
+    const size_t last_block_index = k / BLOCK_WIDTH, 
+                 last_rem_bits = k % BLOCK_WIDTH;
+
+    size_t res = 0;
+    if (_YAEF_LIKELY(last_block_index != num_blocks)) {
+        const uint64_t last_block = extract_first_bits(blocks[last_block_index], last_rem_bits);
+        res += popcount(last_block);    
+    }
+
+    const uint64_t prv_num_ones = _mm512_cvtsi512_si32(_mm512_maskz_permutexvar_epi64(
+        last_block_index != 0, _mm512_set1_epi64(last_block_index - 1), popcnts_vec));
+    res += prv_num_ones;
+
+    return res;
+}
+
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+popcount_blocks_1024_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    k = std::min(k, num_blocks * BLOCK_WIDTH);
+    
+    __m512i loaded_vecs[2], popcnts_vecs[2];
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vecs[0] = _mm512_load_si512(blocks);
+        loaded_vecs[1] = _mm512_load_si512(blocks + 8);
+    } else {
+        loaded_vecs[0] = _mm512_loadu_si512(blocks);
+        loaded_vecs[1] = _mm512_loadu_si512(blocks + 8);
+    }
+
+    popcnts_vecs[0] = _mm512_popcnt_epi64(loaded_vecs[0]);
+    popcnts_vecs[1] = _mm512_popcnt_epi64(loaded_vecs[1]);
+
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 1));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 2));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 4));
+
+    __m512i prv_sum = _mm512_permutexvar_epi64(_mm512_set1_epi64(7), popcnts_vecs[0]);
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 1));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 2));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 4));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], prv_sum);
+
+    const size_t last_block_index = k / BLOCK_WIDTH, 
+                 last_rem_bits = k % BLOCK_WIDTH;
+    
+    size_t res = 0;
+    if (_YAEF_LIKELY(last_block_index != num_blocks)) {
+        uint64_t loaded[16];
+        memcpy(loaded, &loaded_vecs, sizeof(loaded_vecs));
+        uint64_t last_block = extract_first_bits(loaded[last_block_index], last_rem_bits);
+        res += popcount(last_block);
+    }
+    
+    uint64_t popcnts[16];
+    memcpy(popcnts, &popcnts_vecs, sizeof(popcnts_vecs));
+    res += last_block_index == 0 ? 0 : popcnts[last_block_index - 1];
+
+    return res;
+}
+#endif
+
 _YAEF_ATTR_NODISCARD inline size_t
 select_one_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
     constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
 
     size_t num_ones = k + 1;
     const uint64_t *last_block = nullptr;
+
+    if (_YAEF_UNLIKELY(num_ones == 0)) {
+        return static_cast<size_t>(-1);
+    }
 
     for (size_t i = 0; i < num_blocks; ++i) {
         uint32_t block_num_ones = popcount(blocks[i]);
@@ -1128,6 +1219,10 @@ select_zero_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
     size_t num_zeros = k + 1;
     const uint64_t *last_block = nullptr;
 
+    if (_YAEF_UNLIKELY(num_zeros == 0)) {
+        return static_cast<size_t>(-1);
+    }
+
     for (size_t i = 0; i < num_blocks; ++i) {
         uint32_t block_num_zeros = popcount(~blocks[i]);
         if (num_zeros > block_num_zeros) {
@@ -1144,6 +1239,195 @@ select_zero_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
     const size_t num_skipped_blocks = last_block - blocks;
     return num_skipped_blocks * BLOCK_WIDTH + select_zero(*last_block, num_zeros - 1);
 }
+
+#if _YAEF_INTRINSICS_HAVE_AVX512
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+select_one_blocks_512_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    if (_YAEF_UNLIKELY(k + 1 == 0)) {
+        return static_cast<size_t>(-1);
+    }
+    
+    __m512i loaded_vec;
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vec = _mm512_load_si512(blocks);
+    } else {
+        loaded_vec = _mm512_loadu_si512(blocks);
+    }
+ 
+    __m512i popcnts_vec =  _mm512_popcnt_epi64(loaded_vec); 
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 1));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 2));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 4));
+    
+    const __m512i index_vec = _mm512_set1_epi64(k + 1);
+    const __mmask8 cmp_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vec, _MM_CMPINT_LE);
+    const uint32_t lane_idx = count_trailing_zero(cmp_mask);
+    if (_YAEF_UNLIKELY(lane_idx >= 8)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    const uint64_t prv_num_ones = _mm512_cvtsi512_si32(
+        _mm512_maskz_permutexvar_epi64(lane_idx != 0, _mm512_set1_epi64(lane_idx - 1), popcnts_vec));
+
+    const uint64_t local_idx = k - prv_num_ones;
+    const uint64_t block = blocks[lane_idx];
+    size_t pos_in_block = select_one(block, local_idx);
+    return lane_idx * 64 + pos_in_block;
+}
+
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+select_zero_blocks_512_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    if (_YAEF_UNLIKELY(k + 1 == 0)) {
+        return static_cast<size_t>(-1);
+    }
+    
+    __m512i loaded_vec;
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vec = _mm512_load_si512(blocks);
+    } else {
+        loaded_vec = _mm512_loadu_si512(blocks);
+    }
+    loaded_vec = ~loaded_vec;
+ 
+    __m512i popcnts_vec =  _mm512_popcnt_epi64(loaded_vec); 
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 1));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 2));
+    popcnts_vec = _mm512_add_epi64(popcnts_vec, _mm512_alignr_epi64(popcnts_vec, ZERO, 8 - 4));
+    
+    const __m512i index_vec = _mm512_set1_epi64(k + 1);
+    const __mmask8 cmp_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vec, _MM_CMPINT_LE);
+    const uint32_t lane_idx = count_trailing_zero(cmp_mask);
+    if (_YAEF_UNLIKELY(lane_idx >= 8)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    const uint64_t prv_num_ones = _mm512_cvtsi512_si32(
+        _mm512_maskz_permutexvar_epi64(lane_idx != 0, _mm512_set1_epi64(lane_idx - 1), popcnts_vec));
+
+    const uint64_t local_idx = k - prv_num_ones;
+    const uint64_t block = ~blocks[lane_idx];
+    size_t pos_in_block = select_one(block, local_idx);
+    return lane_idx * BLOCK_WIDTH + pos_in_block;
+}
+
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+select_one_blocks_1024_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    if (_YAEF_UNLIKELY(k + 1 == 0)) {
+        return static_cast<size_t>(-1);
+    }
+
+    __m512i loaded_vecs[2], popcnts_vecs[2];
+
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vecs[0] = _mm512_load_si512(blocks);
+        loaded_vecs[1] = _mm512_load_si512(blocks + 8);
+    } else {
+        loaded_vecs[0] = _mm512_loadu_si512(blocks);
+        loaded_vecs[1] = _mm512_loadu_si512(blocks + 8);
+    }
+
+    popcnts_vecs[0] = _mm512_popcnt_epi64(loaded_vecs[0]);
+    popcnts_vecs[1] = _mm512_popcnt_epi64(loaded_vecs[1]);
+
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 1));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 2));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 4));
+
+    __m512i prv_sum = _mm512_permutexvar_epi64(_mm512_set1_epi64(7), popcnts_vecs[0]);
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 1));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 2));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 4));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], prv_sum);
+
+    const __m512i index_vec = _mm512_set1_epi64(k + 1);
+    const __mmask8 cmp1_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vecs[0], _MM_CMPINT_LE);
+    const __mmask8 cmp2_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vecs[1], _MM_CMPINT_LE);
+    const __mmask16 cmp_mask = (static_cast<__mmask16>(cmp2_mask) << 8) | cmp1_mask;
+
+    const uint32_t lane_idx = count_trailing_zero(cmp_mask);
+    if (_YAEF_UNLIKELY(lane_idx >= 16)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    uint64_t loaded[16], popcnts[16];
+    memcpy(loaded, &loaded_vecs, sizeof(loaded_vecs));
+    memcpy(popcnts, &popcnts_vecs, sizeof(popcnts_vecs));
+
+    const uint64_t prev_num_ones = lane_idx == 0 ? 0 : popcnts[lane_idx - 1];
+    const uint64_t local_idx = k - prev_num_ones;
+    const uint64_t block = loaded[lane_idx];
+    size_t pos_in_block = select_one(block, local_idx);
+    return lane_idx * BLOCK_WIDTH + pos_in_block;
+}
+
+template<bool Aligned = false>
+_YAEF_ATTR_NODISCARD inline size_t
+select_zero_blocks_1024_avx512(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+    const __m512i ZERO = _mm512_setzero_si512();
+
+    if (_YAEF_UNLIKELY(k + 1 == 0)) {
+        return static_cast<size_t>(-1);
+    }
+
+    __m512i loaded_vecs[2], popcnts_vecs[2];
+
+    if _YAEF_CXX17_CONSTEXPR (Aligned) {
+        loaded_vecs[0] = _mm512_load_si512(blocks);
+        loaded_vecs[1] = _mm512_load_si512(blocks + 8);
+    } else {
+        loaded_vecs[0] = _mm512_loadu_si512(blocks);
+        loaded_vecs[1] = _mm512_loadu_si512(blocks + 8);
+    }
+    loaded_vecs[0] = ~loaded_vecs[0];
+    loaded_vecs[1] = ~loaded_vecs[1];
+
+    popcnts_vecs[0] = _mm512_popcnt_epi64(loaded_vecs[0]);
+    popcnts_vecs[1] = _mm512_popcnt_epi64(loaded_vecs[1]);
+
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 1));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 2));
+    popcnts_vecs[0] = _mm512_add_epi64(popcnts_vecs[0], _mm512_alignr_epi64(popcnts_vecs[0], ZERO, 8 - 4));
+
+    __m512i prv_sum = _mm512_permutexvar_epi64(_mm512_set1_epi64(7), popcnts_vecs[0]);
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 1));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 2));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], _mm512_alignr_epi64(popcnts_vecs[1], ZERO, 8 - 4));
+    popcnts_vecs[1] = _mm512_add_epi64(popcnts_vecs[1], prv_sum);
+
+    const __m512i index_vec = _mm512_set1_epi64(k + 1);
+    const __mmask8 cmp1_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vecs[0], _MM_CMPINT_LE);
+    const __mmask8 cmp2_mask = _mm512_cmp_epu64_mask(index_vec, popcnts_vecs[1], _MM_CMPINT_LE);
+    const __mmask16 cmp_mask = (static_cast<__mmask16>(cmp2_mask) << 8) | cmp1_mask;
+
+    const uint32_t lane_idx = count_trailing_zero(cmp_mask);
+    if (_YAEF_UNLIKELY(lane_idx >= 16)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    uint64_t loaded[16], popcnts[16];
+    memcpy(loaded, &loaded_vecs, sizeof(loaded_vecs));
+    memcpy(popcnts, &popcnts_vecs, sizeof(popcnts_vecs));
+
+    const uint64_t prev_num_ones = lane_idx == 0 ? 0 : popcnts[lane_idx - 1];
+    const uint64_t local_idx = k - prev_num_ones;
+    const uint64_t block = loaded[lane_idx];
+    size_t pos_in_block = select_one(block, local_idx);
+    return lane_idx * BLOCK_WIDTH + pos_in_block;
+}
+#endif
 
 class bit_view;
 class packed_int_view;
@@ -1356,6 +1640,49 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_view &lhs, const pa
 }
 #endif
 
+class bits_reader {
+public:
+    bits_reader(const uint64_t *blocks, size_t num_blocks)
+        : blocks_(blocks), num_blocks_(num_blocks) {
+        refill();
+    }
+
+    _YAEF_ATTR_NODISCARD uint64_t read_bits(uint32_t width) {
+        if (_YAEF_UNLIKELY(width > buf_size_)) {
+            refill();
+        }
+        uint64_t val = extract_first_bits(static_cast<uint64_t>(buf_), width);
+        buf_ >>= width;
+        buf_size_ -= width;
+        return val;
+    }
+
+    _YAEF_ATTR_NODISCARD uint64_t peek_bits(uint32_t width) {
+        if (_YAEF_UNLIKELY(width > buf_size_)) {
+            refill();
+        }
+        uint64_t val = extract_first_bits(static_cast<uint64_t>(buf_), width);
+        return val;
+    }
+
+private:
+    const uint64_t *blocks_;
+    size_t          num_blocks_;
+    __uint128_t     buf_       = 0;
+    uint32_t        buf_size_  = 0;
+    size_t          block_idx_ = 0;
+
+    void refill() {
+#ifdef NDEBUG
+        _YAEF_UNUSED(num_blocks_);
+#endif
+        _YAEF_ASSERT(block_idx_ < num_blocks_);
+        uint64_t new_block = blocks_[block_idx_++];
+        buf_ |= static_cast<__uint128_t>(new_block) << buf_size_;
+        buf_size_ += 64;
+    }
+};
+
 class bit_view {
 public:
     using value_type = bool;
@@ -1500,6 +1827,10 @@ public:
             block_type &block = blocks_[block_index];
             block = bits64::set_bits(block, bit_offset, val, w);
         }
+    }
+
+    _YAEF_ATTR_NODISCARD bits_reader new_reader() const {
+        return bits_reader(blocks_, num_blocks());
     }
 
     void swap(bit_view &other) noexcept {
@@ -5097,6 +5428,15 @@ private:
 
 namespace details {
 
+struct hybrid_dispatch_name {
+    template<typename T>
+    struct caller {
+        void operator()(std::string *name_out) {
+            T::name(name_out);
+        }
+    };
+};
+
 struct hybrid_dispatch_at {
     template<typename T>
     struct caller {
@@ -5251,6 +5591,16 @@ public:
     virtual void encode(uint8_t *buf_out, uint8_t &ext_meta) const = 0;
 };
 
+struct hybrid_method_stat_entry {
+    uint32_t    id = -1;
+    std::string name;
+    size_t      encoded_elements = 0;
+    size_t      num_partitions = 0;
+    size_t      space_usage_in_bytes = 0;
+    double      encoding_ratio = 0;
+    double      space_usage_ratio = 0;
+};
+
 namespace details {
 
 static constexpr size_t DEFAULT_HYBRID_PARTITION_SIZE = 256;
@@ -5275,6 +5625,12 @@ struct hybrid_method_type_list {
         return std::unique_ptr<encoder_type_of<Idx, RandomAccessIterT>>(
             new encoder_type_of<Idx, RandomAccessIterT>(first, n)
         );
+    }
+
+    _YAEF_ATTR_NODISCARD static std::string dispatch_name(size_t method_idx) {
+        std::string name;
+        dispatcher::template execute<details::hybrid_dispatch_name>(method_idx, &name);
+        return name;
     }
 
     _YAEF_ATTR_NODISCARD static uint64_t 
@@ -5591,6 +5947,8 @@ public:
         );
     }
 
+    static void name(std::string *out) { *out = "fixed"; }
+
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
         using details::bits64::bit_view;
         bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
@@ -5661,6 +6019,8 @@ public:
         );
     }
 
+    static void name(std::string *out) { *out = "fixed_gap"; }
+
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
         using details::bits64::bit_view;
         bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
@@ -5687,6 +6047,148 @@ public:
                 *res_out = i + 1;
                 return;
             }
+        }
+        *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
+    }
+};
+
+class eliasgamma_unique_gap {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n)
+            : first_(first), num_(n) {
+            for (size_t i = 1; i < n; ++i) {
+                uint64_t gap = first[i] - first[i - 1];
+                if (_YAEF_UNLIKELY(gap == 0)) {
+                    estimated_bits_ = std::numeric_limits<size_t>::max();
+                    return;
+                }
+
+                uint32_t width = std::max<uint32_t>(1, details::bits64::bit_width(gap));
+                estimated_bits_ += 2 * width - 1;
+                required_unary_bits_ += width;
+                required_body_bits_ += width - 1;
+            }
+            required_unary_bits_ = details::bits64::align_to<64>(required_unary_bits_);
+            required_body_bits_ = details::bits64::align_to<64>(required_body_bits_);
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return estimated_bits_;
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return required_unary_bits_ + required_body_bits_;
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            using details::bits64::bit_view;
+
+            size_t num_unary_blocks = details::bits64::align_to<64>(required_unary_bits_) / bit_view::BLOCK_WIDTH;
+            _YAEF_ASSERT(num_unary_blocks <= 256);
+            ext_meta = static_cast<uint8_t>(num_unary_blocks - 1);
+
+            auto unary_view = bit_view(reinterpret_cast<uint64_t *>(buf_out), bit_view::dont_care_size);
+            auto body_view = bit_view(
+                reinterpret_cast<uint64_t *>(buf_out) + num_unary_blocks, bit_view::dont_care_size);
+
+            unary_view.clear_all_bits(0, details::bits64::align_to<64>(required_unary_bits_));
+            body_view.clear_all_bits(0, required_body_bits_);
+
+            for (size_t i = 1, unary_bit_offset = 0, body_bit_offset = 0; i < num_; ++i) {
+                uint64_t gap = first_[i] - first_[i - 1];
+                uint32_t width = details::bits64::bit_width(gap);
+                unary_view.set_bit(unary_bit_offset + width - 1);
+                unary_bit_offset += width;
+                if (width > 1) {
+                    body_view.set_bits(body_bit_offset, width - 1, gap);
+                }
+                body_bit_offset += width - 1;
+            }
+        }
+    
+    private:
+        RandomAccessIterT first_;
+        size_t            num_;
+        size_t            estimated_bits_      = 0;
+        size_t            required_unary_bits_ = 0;
+        size_t            required_body_bits_  = 0;
+    };
+
+public:
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void name(std::string *out) { *out = "eliasgamma_gap"; }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        using details::bits64::bit_view;
+        
+        auto unary_data = reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data));
+        const size_t num_unary_blocks = static_cast<size_t>(ext_meta) + 1;
+
+        auto body_view = bit_view(
+            reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)) + num_unary_blocks, bit_view::dont_care_size);
+        auto body_reader = body_view.new_reader();
+        
+        uint8_t prv_zeros = 0;
+        uint64_t res = 0;
+        for (size_t i = 0, j = 0; j < offset && i < num_unary_blocks; ++i) {
+            uint64_t block = unary_data[i];
+            uint8_t unconsumed_bits = 64;
+            while (j < offset && block != 0) {
+                uint64_t num_zeros = details::bits64::count_trailing_zero(block);
+                uint8_t w = num_zeros + prv_zeros;
+                prv_zeros = 0;
+                block >>= num_zeros + 1;
+                unconsumed_bits -= num_zeros + 1;
+                uint64_t body = body_reader.read_bits(w);
+                uint64_t gap = details::bits64::set_bit(body, w);
+                res += gap;
+                ++j;
+            }
+            prv_zeros = unconsumed_bits;
+        }
+        *res_out = res;
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        using details::bits64::bit_view;
+
+        auto unary_data = reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data));
+        const size_t num_unary_blocks = static_cast<size_t>(ext_meta) + 1;
+
+        auto body_view = bit_view(
+            reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)) + num_unary_blocks, bit_view::dont_care_size);
+        auto body_reader = body_view.new_reader();
+        
+        uint16_t prv_zeros = 0;
+        uint64_t val = 0;
+        for (size_t i = 0, j = 0; j < details::DEFAULT_HYBRID_PARTITION_SIZE - 1 && i < num_unary_blocks; ++i) {
+            uint64_t block = unary_data[i];
+            uint8_t unconsumed_bits = 64;
+            while (block != 0) {
+                uint64_t num_zeros = details::bits64::count_trailing_zero(block);;
+                uint8_t w = num_zeros + prv_zeros;
+                prv_zeros = 0;
+                block >>= num_zeros + 1;
+                unconsumed_bits -= num_zeros + 1;
+                uint64_t body = body_reader.read_bits(w);
+                uint64_t gap = details::bits64::set_bit(body, w);
+                val += gap;
+                if (val >= target) {
+                    *res_out = j + 1;
+                    return;
+                }
+                ++j;
+            }
+            prv_zeros = unconsumed_bits;
         }
         *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
     }
@@ -5727,6 +6229,8 @@ public:
         );
     }
 
+    static void name(std::string *out) { *out = "linear"; }
+
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
         _YAEF_UNUSED(data);
         _YAEF_UNUSED(ext_meta);
@@ -5756,7 +6260,7 @@ public:
             if (u + 1 >= details::DEFAULT_HYBRID_PARTITION_SIZE * (sizeof(uint64_t) * CHAR_BIT)) {
                 requierd_bits_ = std::numeric_limits<size_t>::max();
             } else {
-                requierd_bits_ = u + 1;
+                requierd_bits_ = details::bits64::align_to<64>(u + 1);
             }
         }
 
@@ -5793,6 +6297,8 @@ public:
         );
     }
 
+    static void name(std::string *out) { *out = "bitmap"; }
+
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
         const uint64_t *data64 = reinterpret_cast<const uint64_t *>(data);
         *res_out = details::bits64::select_one_blocks(data64, static_cast<size_t>(ext_meta) + 1, offset);
@@ -5805,7 +6311,7 @@ public:
             *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
             return;
         }
-        *res_out = details::bits64::popcount_blocks(data64, static_cast<size_t>(ext_meta) + 1, target) - 1;
+        *res_out = details::bits64::popcount_blocks(data64, static_cast<size_t>(ext_meta) + 1, target);
     }
 };
 
@@ -5876,6 +6382,8 @@ public:
         );
     }
 
+    static void name(std::string *out) { *out = "eliasfano"; }
+
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
         using details::bits64::bit_view;
 
@@ -5906,7 +6414,7 @@ public:
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
 
-        size_t start = hi == 0 ? 0 : details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
+        size_t start = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
         size_t end = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
         start = std::min(start, details::DEFAULT_HYBRID_PARTITION_SIZE);
         end = std::min(end, details::DEFAULT_HYBRID_PARTITION_SIZE);
@@ -6029,10 +6537,55 @@ public:
     _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
 
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
-        const size_t num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        const size_type num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
         return partition_samples_.space_usage_in_bytes() +
                PARTITION_DESC_BYTES * num_partitions +
                get_meta().data_bytes;
+    }
+
+    _YAEF_ATTR_NODISCARD std::vector<hybrid_method_stat_entry> method_stats() const {
+        std::vector<hybrid_method_stat_entry> res(NUM_METHODS);
+        for (size_type i = 0; i < NUM_METHODS; ++i) {
+            res[i].id = i;
+            res[i].name = method_types::dispatch_name(i);
+        }
+        
+        const size_type num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        for (size_type i = 0; i < num_partitions - 1; ++i) {
+            const uint64_t partition_desc = *reinterpret_cast<const uint64_t *>(
+                partition_descs_ + PARTITION_DESC_BYTES * i) & PARTITION_DESC_MASK;
+            const uint64_t next_partition_desc = *reinterpret_cast<const uint64_t *>(
+                partition_descs_ + PARTITION_DESC_BYTES * (i + 1)) & PARTITION_DESC_MASK;
+
+            const size_type method_idx = partition_desc & METHOD_MASK;
+            const size_type buf_offset = (partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK;
+            const size_type next_buf_offset = (next_partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK;
+
+            const size_type buf_size = (next_buf_offset - buf_offset) * 8;
+            res[method_idx].encoded_elements += PARTITION_SIZE;
+            res[method_idx].num_partitions++;
+            res[method_idx].space_usage_in_bytes += buf_size;
+        }
+
+        {
+            const uint64_t last_partition_desc = *reinterpret_cast<const uint64_t *>(
+                partition_descs_ + PARTITION_DESC_BYTES * (num_partitions - 1)) & PARTITION_DESC_MASK;
+            const size_type method_idx = last_partition_desc & METHOD_MASK;
+            const size_type buf_offset = (last_partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK;
+            const size_type buf_size = (get_meta().data_bytes - buf_offset * 8);
+            res[method_idx].encoded_elements += size() - (num_partitions - 1) * PARTITION_SIZE;
+            res[method_idx].num_partitions++;
+            res[method_idx].space_usage_in_bytes += buf_size;
+        }
+
+        const size_type total_space_usage = space_usage_in_bytes();
+        for (size_type i = 0; i < NUM_METHODS; ++i) {
+            res[i].encoding_ratio = static_cast<double>(res[i].encoded_elements) /
+                                    static_cast<double>(size());
+            res[i].space_usage_ratio = static_cast<double>(res[i].space_usage_in_bytes) /
+                                       static_cast<double>(total_space_usage);
+        }
+        return res;
     }
 
     _YAEF_ATTR_NODISCARD value_type at(size_type index) const {
