@@ -2,6 +2,7 @@
 
 #include "benchmark_eliasfano_list.hpp"
 #include "benchmark_eliasfano_sequence.hpp"
+#include "benchmark_hybrid_list.hpp"
 #include "benchmark_packed_array.hpp"
 #include "benchmark_plain_array.hpp"
 #include "benchmark_sparse_sampled_list.hpp"
@@ -16,7 +17,10 @@ benchmark_inputs<IntT> generate_dense(size_t num) {
 
 template<typename IntT>
 benchmark_inputs<IntT> generate_random(size_t num, IntT min = std::numeric_limits<IntT>::min(),
-                                       IntT max = std::numeric_limits<IntT>::max()) {
+                                       IntT max = std::numeric_limits<IntT>::max(), bool unique = true) {
+    if (unique) {
+        return benchmark_inputs<IntT>::from_datagen_unique(min, max, num);
+    }
     return benchmark_inputs<IntT>::from_datagen(min, max, num);
 }
 
@@ -39,6 +43,7 @@ void run_benchmarks(const benchmark_inputs<IntT> &inputs) {
 
     REPORT_BENCHMARK(eliasfano_list_benchmark);
     REPORT_BENCHMARK(eliasfano_sequence_benchmark);
+    REPORT_BENCHMARK(hybrid_list_benchmark);
 
     REPORT_BENCHMARK(cardinality_sparse_sampled_list_benchmark);
     REPORT_BENCHMARK(universe_sparse_sampled_list_benchmark);

@@ -6393,7 +6393,7 @@ public:
         
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
-        uint64_t hi = details::bits64::select_one_blocks(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+        uint64_t hi = details::bits64::select_one_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
         *res_out = (hi << lower_width) | lo;
     }
 
@@ -6414,8 +6414,8 @@ public:
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
 
-        size_t start = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
-        size_t end = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
+        size_t start = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
+        size_t end = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
         start = std::min(start, details::DEFAULT_HYBRID_PARTITION_SIZE);
         end = std::min(end, details::DEFAULT_HYBRID_PARTITION_SIZE);
         size_t len = end - start;
@@ -6526,7 +6526,7 @@ public:
     }
 
     hybrid_list &operator=(hybrid_list &&other) noexcept {
-        meta_with_alloc_.value() = std::move(other.meta_with_alloc_.value());
+        meta_with_alloc_.value() = other.meta_with_alloc_.value();
         partition_samples_ = std::move(other.partition_samples_);
         partition_descs_ = details::exchange(other.partition_descs_, nullptr);
         data_ = details::exchange(other.data_, nullptr);
@@ -6674,6 +6674,15 @@ private:
         meta_data(const meta_data &other)
             : min(other.min), max(other.max), size(other.size),
               data_bytes(other.data_bytes), has_duplicates(other.has_duplicates) { }
+
+        meta_data &operator=(const meta_data &other) {
+            min = other.min;
+            max = other.max;
+            size = other.size;
+            data_bytes = other.data_bytes;
+            has_duplicates = other.has_duplicates;
+            return *this;
+        }
 
         error_code serialize(details::serializer &ser) const {
             if (!ser.write(min)) { return error_code::serialize_io; }
