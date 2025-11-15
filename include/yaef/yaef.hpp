@@ -24,6 +24,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
@@ -723,6 +724,11 @@ _YAEF_ATTR_NODISCARD inline T exchange(T &obj, U &&new_val)
 
 namespace bits64 {
 
+template<uint64_t M>
+_YAEF_ATTR_NODISCARD inline uint64_t align_to(uint64_t val) {
+    return (val + M - 1) & ~(M - 1);
+}
+
 // a bit-parallel implementation
 _YAEF_ATTR_NODISCARD inline uint32_t popcount_fallback(uint64_t block) noexcept {
     constexpr uint64_t MASK1 = 0x5555555555555555ULL;
@@ -866,6 +872,18 @@ _YAEF_ATTR_NODISCARD inline uint32_t bit_width(uint64_t x) noexcept {
     return 64 - count_leading_zero(x);
 #endif
 }
+
+constexpr uint32_t constexpr_bit_width_impl(uint64_t x) {
+    return x == 0 ? 0 : 1 + constexpr_bit_width_impl(x >> 1);
+}
+
+#if _YAEF_USE_STL_BITOPS_IMPL
+template<uint64_t Num>
+struct constexpr_bit_width : std::integral_constant<uint32_t, std::bit_width(Num)> { };
+#else
+template<uint64_t Num>
+struct constexpr_bit_width : std::integral_constant<uint32_t, constexpr_bit_width_impl(Num)> { };
+#endif
 
 static constexpr uint64_t LSB_MASK_LUT64[65] = {
     0x0ULL,
@@ -1059,6 +1077,72 @@ _YAEF_ATTR_NODISCARD inline uint64_t idiv_ceil_nzero(uint64_t lhs, uint64_t rhs)
     _YAEF_ASSERT(lhs > 0);
     _YAEF_ASSUME(lhs > 0);
     return (lhs - 1) / rhs + 1;
+}
+
+_YAEF_ATTR_NODISCARD inline size_t 
+popcount_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+
+    k = std::min(k, num_blocks * BLOCK_WIDTH - 1) + 1;
+    const size_t num_skipped_blocks = k / BLOCK_WIDTH,
+                 num_rem_bits = k % BLOCK_WIDTH;
+    
+    size_t num_ones = 0;
+    for (size_t i = 0; i < num_skipped_blocks; ++i) {
+        num_ones += popcount(blocks[i]);
+    }
+    if (num_rem_bits != 0) {
+        num_ones += popcount(extract_first_bits(blocks[num_skipped_blocks], num_rem_bits));
+    }
+    return num_ones;
+}
+
+_YAEF_ATTR_NODISCARD inline size_t
+select_one_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+
+    size_t num_ones = k + 1;
+    const uint64_t *last_block = nullptr;
+
+    for (size_t i = 0; i < num_blocks; ++i) {
+        uint32_t block_num_ones = popcount(blocks[i]);
+        if (num_ones > block_num_ones) {
+            num_ones -= block_num_ones;
+        } else {
+            last_block = blocks + i;
+            break;
+        }
+    }
+    if (_YAEF_UNLIKELY(last_block == nullptr)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    const size_t num_skipped_blocks = last_block - blocks;
+    return num_skipped_blocks * BLOCK_WIDTH + select_one(*last_block, num_ones - 1);
+}
+
+_YAEF_ATTR_NODISCARD inline size_t
+select_zero_blocks(const uint64_t *blocks, size_t num_blocks, size_t k) {
+    constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+
+    size_t num_zeros = k + 1;
+    const uint64_t *last_block = nullptr;
+
+    for (size_t i = 0; i < num_blocks; ++i) {
+        uint32_t block_num_zeros = popcount(~blocks[i]);
+        if (num_zeros > block_num_zeros) {
+            num_zeros -= block_num_zeros;
+        } else {
+            last_block = blocks + i;
+            break;
+        }
+    }
+    if (_YAEF_UNLIKELY(last_block == nullptr)) {
+        return num_blocks * BLOCK_WIDTH;
+    }
+
+    const size_t num_skipped_blocks = last_block - blocks;
+    return num_skipped_blocks * BLOCK_WIDTH + select_zero(*last_block, num_zeros - 1);
 }
 
 class bit_view;
@@ -1473,7 +1557,7 @@ private:
                 blocks_[start_block_index] &= ~mask;
             }
         } else {
-            const block_type head_mask = make_mask_msb1(start_block_offset);
+            const block_type head_mask = make_mask_msb1(BLOCK_WIDTH - start_block_offset);
             if _YAEF_CXX17_CONSTEXPR (Op) {
                 blocks_[start_block_index] |= head_mask;
             } else {
@@ -4747,6 +4831,11 @@ public:
         return at(index); 
     }
 
+    _YAEF_ATTR_NODISCARD const_iterator begin() const { return cbegin(); }
+    _YAEF_ATTR_NODISCARD const_iterator end() const { return cend(); }
+    _YAEF_ATTR_NODISCARD const_iterator cbegin() const { return data_; }
+    _YAEF_ATTR_NODISCARD const_iterator cend() const { return size_ == 0 ? data_ : data_ + size_; }
+
     _YAEF_ATTR_NODISCARD const_iterator lower_bound(value_type target) const {
         return data_ + index_of_lower_bound(target);
     }
@@ -5003,6 +5092,1188 @@ private:
         value_type *iter = details::branchless_upper_bound(data_ + first, last - first, target);
         size_type idx = iter - data_;
         return idx;
+    }
+};
+
+namespace details {
+
+struct hybrid_dispatch_at {
+    template<typename T>
+    struct caller {
+        void operator()(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+            T::at(offset, data, ext_meta, res_out);
+        }
+    };
+};
+
+struct hybrid_dispatch_index_of_lower_bound {
+    template<typename T>
+    struct caller {
+        void operator()(uint64_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+            T::index_of_lower_bound(target, data, ext_meta, res_out);
+        }
+    };
+};
+
+template<size_t Alternatives, typename MethodTup>
+struct hybrid_method_dispatcher;
+
+#define _YAEF_DISPATCH_CALL(_idx) \
+    typename Fn::template caller<typename std::tuple_element<_idx, MethodTup>::type>()(std::forward<ArgTs>(args)...);
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<1, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        _YAEF_ASSERT(idx == 0);
+#ifdef NDEBUG
+        _YAEF_UNUSED(idx);
+#endif
+        _YAEF_DISPATCH_CALL(0);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<2, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        _YAEF_ASSERT(idx == 0 || idx == 1);
+        if (idx == 0) {
+            _YAEF_DISPATCH_CALL(0);
+        } else {
+            _YAEF_DISPATCH_CALL(1);
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<3, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<4, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        case 3  : _YAEF_DISPATCH_CALL(3); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<5, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        case 3  : _YAEF_DISPATCH_CALL(3); break;
+        case 4  : _YAEF_DISPATCH_CALL(4); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<6, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        case 3  : _YAEF_DISPATCH_CALL(3); break;
+        case 4  : _YAEF_DISPATCH_CALL(4); break;
+        case 5  : _YAEF_DISPATCH_CALL(5); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<7, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        case 3  : _YAEF_DISPATCH_CALL(3); break;
+        case 4  : _YAEF_DISPATCH_CALL(4); break;
+        case 5  : _YAEF_DISPATCH_CALL(5); break;
+        case 6  : _YAEF_DISPATCH_CALL(6); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_dispatcher<8, MethodTup> {
+    template<typename Fn, typename ...ArgTs>
+    static void execute(size_t idx, ArgTs &&...args) {
+        switch (idx) {
+        case 0  : _YAEF_DISPATCH_CALL(0); break;
+        case 1  : _YAEF_DISPATCH_CALL(1); break;
+        case 2  : _YAEF_DISPATCH_CALL(2); break;
+        case 3  : _YAEF_DISPATCH_CALL(3); break;
+        case 4  : _YAEF_DISPATCH_CALL(4); break;
+        case 5  : _YAEF_DISPATCH_CALL(5); break;
+        case 6  : _YAEF_DISPATCH_CALL(6); break;
+        case 7  : _YAEF_DISPATCH_CALL(7); break;
+        default : _YAEF_UNREACHABLE();
+        }
+    }
+};
+#undef _YAEF_DISPATCH_CALL
+
+}
+
+class hybrid_method_encoder {
+public:
+    virtual ~hybrid_method_encoder() = default;
+
+    virtual size_t estimated_bits() const = 0;
+    virtual size_t required_bits() const = 0;
+    virtual void encode(uint8_t *buf_out, uint8_t &ext_meta) const = 0;
+};
+
+namespace details {
+
+static constexpr size_t DEFAULT_HYBRID_PARTITION_SIZE = 256;
+
+template<typename ...Methods>
+struct hybrid_method_type_list {
+    using tuple_type = std::tuple<Methods...>;
+    using dispatcher = details::hybrid_method_dispatcher<sizeof...(Methods), tuple_type>;
+
+    template<size_t Idx>
+    using at = typename std::tuple_element<Idx, tuple_type>::type;
+
+    template<size_t Idx, typename IterT>
+    using encoder_type_of = typename at<Idx>::template encoder_type<IterT>;
+
+    template<typename IterT>
+    using encoders_tuple = std::tuple<typename Methods::template encoder_type<IterT>...>;
+
+    template<size_t Idx, typename RandomAccessIterT>
+    _YAEF_ATTR_NODISCARD static std::unique_ptr<hybrid_method_encoder>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type_of<Idx, RandomAccessIterT>>(
+            new encoder_type_of<Idx, RandomAccessIterT>(first, n)
+        );
+    }
+
+    _YAEF_ATTR_NODISCARD static uint64_t 
+    dispatch_at(size_t method_idx, size_t offset, const uint8_t *data, uint8_t ext_meta) {
+        uint64_t res = 0;
+        dispatcher::template execute<details::hybrid_dispatch_at>(method_idx, offset, data, ext_meta, &res);
+        return res;
+    }
+
+    _YAEF_ATTR_NODISCARD static size_t 
+    dispatch_index_of_lower_bound(size_t method_idx, size_t offset, const uint8_t *data, uint8_t ext_meta) {
+        size_t res = 0;
+        dispatcher::template execute<details::hybrid_dispatch_index_of_lower_bound>(
+            method_idx, offset, data, ext_meta, &res);
+        return res;
+    }
+};
+
+template<typename MethodTup, size_t N>
+struct hybrid_method_selector;
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 1> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        return std::make_pair(std::tuple_element<0, MethodTup>::type::new_encoder(first, n), 0);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 2> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        auto encoder1 = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        auto encoder2 = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        if (encoder1->estimated_bits() <= encoder2->estimated_bits()) {
+            return std::make_pair(std::move(encoder1), 0);
+        } else {
+            return std::make_pair(std::move(encoder2), 1);
+        }
+    }
+};
+
+template<size_t N>
+_YAEF_ATTR_NODISCARD std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+find_best_hybrid_encoder(std::array<std::unique_ptr<hybrid_method_encoder>, N> &arr) {
+    size_t best_bits = arr[0]->estimated_bits();
+    size_t best_idx = 0;
+    for (size_t i = 1; i < N; ++i) {
+        size_t estimated = arr[i]->estimated_bits();
+        if (estimated < best_bits) {
+            best_bits = estimated;
+            best_idx = i;
+        }
+    }
+    return std::make_pair(std::move(arr[best_idx]), best_idx);
+}
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 3> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 3> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 4> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 4> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        cands[3] = std::tuple_element<3, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 5> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 5> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        cands[3] = std::tuple_element<3, MethodTup>::type::new_encoder(first, n);
+        cands[4] = std::tuple_element<4, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 6> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 6> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        cands[3] = std::tuple_element<3, MethodTup>::type::new_encoder(first, n);
+        cands[4] = std::tuple_element<4, MethodTup>::type::new_encoder(first, n);
+        cands[5] = std::tuple_element<5, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 7> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 7> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        cands[3] = std::tuple_element<3, MethodTup>::type::new_encoder(first, n);
+        cands[4] = std::tuple_element<4, MethodTup>::type::new_encoder(first, n);
+        cands[5] = std::tuple_element<5, MethodTup>::type::new_encoder(first, n);
+        cands[6] = std::tuple_element<6, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename MethodTup>
+struct hybrid_method_selector<MethodTup, 8> {
+    template<typename RandomAccessIterT>
+    static std::pair<std::unique_ptr<hybrid_method_encoder>, size_t> 
+    select(RandomAccessIterT first, size_t n) {
+        std::array<std::unique_ptr<hybrid_method_encoder>, 8> cands;
+        cands[0] = std::tuple_element<0, MethodTup>::type::new_encoder(first, n);
+        cands[1] = std::tuple_element<1, MethodTup>::type::new_encoder(first, n);
+        cands[2] = std::tuple_element<2, MethodTup>::type::new_encoder(first, n);
+        cands[3] = std::tuple_element<3, MethodTup>::type::new_encoder(first, n);
+        cands[4] = std::tuple_element<4, MethodTup>::type::new_encoder(first, n);
+        cands[5] = std::tuple_element<5, MethodTup>::type::new_encoder(first, n);
+        cands[6] = std::tuple_element<6, MethodTup>::type::new_encoder(first, n);
+        cands[7] = std::tuple_element<7, MethodTup>::type::new_encoder(first, n);
+        return find_best_hybrid_encoder(cands);
+    }
+};
+
+template<typename RandomAccessIterT>
+class hybrid_encoding_iterator_adaptor {
+public:
+    using difference_type   = typename std::iterator_traits<RandomAccessIterT>::difference_type;
+    using value_type        = uint64_t;
+    using pointer           = const uint64_t*;
+    using reference         = uint64_t;
+    using iterator_category = std::random_access_iterator_tag;
+
+    hybrid_encoding_iterator_adaptor() = default;
+
+    explicit hybrid_encoding_iterator_adaptor(
+        RandomAccessIterT iter, 
+        typename std::iterator_traits<RandomAccessIterT>::value_type min,
+        uint64_t sample)
+        : cur_(iter), min_(static_cast<uint64_t>(min)), sample_(sample) {}
+
+    reference operator*() const {
+        return static_cast<uint64_t>(*cur_) - min_ - sample_;
+    }
+
+    pointer operator->() const {
+        holder_ = operator*();
+        return &holder_;
+    }
+
+    bool operator==(const hybrid_encoding_iterator_adaptor& other) const {
+        return cur_ == other.cur_;
+    }
+
+    bool operator!=(const hybrid_encoding_iterator_adaptor& other) const {
+        return !(*this == other);
+    }
+
+    bool operator<(const hybrid_encoding_iterator_adaptor& other) const {
+        return cur_ < other.cur_;
+    }
+
+    bool operator>(const hybrid_encoding_iterator_adaptor& other) const {
+        return other < *this;
+    }
+
+    bool operator<=(const hybrid_encoding_iterator_adaptor& other) const {
+        return !(other < *this);
+    }
+
+    bool operator>=(const hybrid_encoding_iterator_adaptor& other) const {
+        return !(*this < other);
+    }
+
+    hybrid_encoding_iterator_adaptor& operator++() {
+        ++cur_;
+        return *this;
+    }
+
+    hybrid_encoding_iterator_adaptor operator++(int) {
+        hybrid_encoding_iterator_adaptor temp = *this;
+        ++cur_;
+        return temp;
+    }
+
+    hybrid_encoding_iterator_adaptor& operator--() {
+        --cur_;
+        return *this;
+    }
+
+    hybrid_encoding_iterator_adaptor operator--(int) {
+        hybrid_encoding_iterator_adaptor temp = *this;
+        --cur_;
+        return temp;
+    }
+
+    hybrid_encoding_iterator_adaptor operator+(difference_type n) const {
+        return hybrid_encoding_iterator_adaptor(cur_ + n, min_, sample_);
+    }
+
+    hybrid_encoding_iterator_adaptor operator-(difference_type n) const {
+        return hybrid_encoding_iterator_adaptor(cur_ - n);
+    }
+
+    difference_type operator-(const hybrid_encoding_iterator_adaptor& other) const {
+        return cur_ - other.cur_;
+    }
+
+    hybrid_encoding_iterator_adaptor& operator+=(difference_type n) {
+        cur_ += n;
+        return *this;
+    }
+
+    hybrid_encoding_iterator_adaptor& operator-=(difference_type n) {
+        cur_ -= n;
+        return *this;
+    }
+
+    reference operator[](difference_type n) const {
+        return static_cast<uint64_t>(cur_[n]) - min_ - sample_;
+    }
+
+    const RandomAccessIterT& base() const {
+        return cur_;
+    }
+private:
+    RandomAccessIterT cur_;
+    uint64_t          min_ = 0;
+    uint64_t          sample_ = 0;
+    mutable uint64_t  holder_ = 0;
+};
+
+template<typename RandomAccessIterT>
+inline hybrid_encoding_iterator_adaptor<RandomAccessIterT> operator+(
+    typename hybrid_encoding_iterator_adaptor<RandomAccessIterT>::difference_type n,
+    const hybrid_encoding_iterator_adaptor<RandomAccessIterT>& iter) {
+    return iter + n;
+}
+
+}
+
+namespace hybrid_methods {
+
+class fixed {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n)
+            : first_(first), num_(n) {
+            auto maxval = first_[num_ - 1];
+            width_ = std::max<uint32_t>(1, details::bits64::bit_width(maxval));
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return num_ * width_;
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return num_ * width_;
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            using details::bits64::bit_view;
+            bit_view bv(reinterpret_cast<uint64_t *>(buf_out), bit_view::dont_care_size);
+            ext_meta = width_;
+
+            for (size_t i = 0, bit_offset = 0; i < num_; ++i, bit_offset += width_) {
+                uint64_t bits = first_[i];
+                bv.set_bits(bit_offset, width_, bits);
+            }
+        }
+    
+    private:
+        RandomAccessIterT first_;
+        size_t            num_;
+        uint32_t          width_;
+    };
+
+public:
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        using details::bits64::bit_view;
+        bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+        const uint32_t width = ext_meta;
+
+        *res_out = bv.get_bits(width * offset, width);
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        using details::bits64::bit_view;
+        bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+        const uint32_t width = ext_meta;
+
+        for (size_t i = 0, bit_offset = 0; i < details::DEFAULT_HYBRID_PARTITION_SIZE; ++i, bit_offset += width) {
+           if (bv.get_bits(bit_offset, width) >= target) {
+                *res_out = i;
+                return;
+            }
+        }
+        *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
+    }
+};
+
+class fixed_gap {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n)
+            : first_(first), num_(n) {
+            width_ = 1;
+            for (size_t i = 1; i < n; ++i) {
+                uint64_t gap = first[i] - first[i - 1];
+                width_ = std::max(width_, details::bits64::bit_width(gap));
+            }
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return width_ * (num_ - 1);
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return width_ * (num_ - 1);
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            using details::bits64::bit_view;
+            bit_view bv(reinterpret_cast<uint64_t *>(buf_out), bit_view::dont_care_size);
+            ext_meta = static_cast<uint8_t>(width_);
+
+            for (size_t i = 1, bit_offset = 0; i < num_; ++i, bit_offset += width_) {
+                uint64_t gap = first_[i] - first_[i - 1];
+                bv.set_bits(bit_offset, width_, gap);
+            }
+        }
+    
+    private:
+        RandomAccessIterT first_;
+        size_t            num_;
+        uint32_t          width_;
+    };
+
+public:
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        using details::bits64::bit_view;
+        bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+        const uint32_t width = ext_meta;
+
+        uint64_t res = 0;
+        for (size_t i = 0, bit_offset = 0; i < offset; ++i, bit_offset += width) {
+            uint64_t gap = bv.get_bits(bit_offset, width);
+            res += gap;
+        }
+        *res_out = res;
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        using details::bits64::bit_view;
+        bit_view bv(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+        const uint32_t width = ext_meta;
+
+        uint64_t val = 0;
+        for (size_t i = 0, bit_offset = 0; i < details::DEFAULT_HYBRID_PARTITION_SIZE - 1; ++i, bit_offset += width) {
+            uint64_t gap = bv.get_bits(bit_offset, width);
+            val += gap;
+            if (val >= target) {
+                *res_out = i + 1;
+                return;
+            }
+        }
+        *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
+    }
+};
+
+class linear {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n) {
+            uint64_t u = first[n - 1] - first[0];
+            usable_ = u == (n - 1);
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return usable_ ? 0 : std::numeric_limits<size_t>::max();
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return usable_ ? 0 : std::numeric_limits<size_t>::max();
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            _YAEF_UNUSED(buf_out);
+            _YAEF_UNUSED(ext_meta);
+        }
+    
+    private:
+        bool usable_ = false;
+    };
+
+public:
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        _YAEF_UNUSED(data);
+        _YAEF_UNUSED(ext_meta);
+        *res_out = offset;
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        _YAEF_UNUSED(data);
+        _YAEF_UNUSED(ext_meta);
+        *res_out = std::min<size_t>(details::DEFAULT_HYBRID_PARTITION_SIZE, target);
+    }
+};
+
+class bitmap {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n)
+            : first_(first), num_(n) {
+            for (size_t i = 1; i < n; ++i) {
+                if (first[i] == first[i - 1]) {
+                    requierd_bits_ = std::numeric_limits<size_t>::max();
+                    return;
+                }
+            }
+            const uint64_t u = first[n - 1];
+            if (u + 1 >= details::DEFAULT_HYBRID_PARTITION_SIZE * (sizeof(uint64_t) * CHAR_BIT)) {
+                requierd_bits_ = std::numeric_limits<size_t>::max();
+            } else {
+                requierd_bits_ = u + 1;
+            }
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return requierd_bits_;
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return requierd_bits_;
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            using details::bits64::bit_view;
+            bit_view bv(reinterpret_cast<uint64_t *>(buf_out), bit_view::dont_care_size);
+            bv.clear_all_bits(0, requierd_bits_);
+            for (size_t i = 0; i < num_; ++i) {
+                bv.set_bit(first_[i]);
+            }
+            ext_meta = details::bits64::idiv_ceil(first_[num_ - 1] + 1, 64) - 1;
+        }
+    
+    private:
+        RandomAccessIterT first_;
+        size_t            num_;
+        size_t            requierd_bits_;
+    };
+
+public:
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        const uint64_t *data64 = reinterpret_cast<const uint64_t *>(data);
+        *res_out = details::bits64::select_one_blocks(data64, static_cast<size_t>(ext_meta) + 1, offset);
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) { 
+        constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+        const uint64_t *data64 = reinterpret_cast<const uint64_t *>(data);
+        if (target / BLOCK_WIDTH > static_cast<size_t>(ext_meta) + 1) {
+            *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
+            return;
+        }
+        *res_out = details::bits64::popcount_blocks(data64, static_cast<size_t>(ext_meta) + 1, target) - 1;
+    }
+};
+
+class eliasfano {
+public:
+    template<typename RandomAccessIterT>
+    struct encoder_type : hybrid_method_encoder {
+        encoder_type(RandomAccessIterT first, size_t n)
+            : first_(first), num_(n) {
+            const uint64_t u = first[n - 1];
+            lower_width_ = std::max<uint32_t>(1, details::bits64::bit_width(u / n));
+            required_lower_bits_ = lower_width_ * details::DEFAULT_HYBRID_PARTITION_SIZE;
+            required_upper_bits_ = n + (u >> lower_width_) + 1;
+        }
+
+        _YAEF_ATTR_NODISCARD size_t estimated_bits() const override {
+            return lower_width_ * num_ + required_upper_bits_;
+        }
+
+        _YAEF_ATTR_NODISCARD size_t required_bits() const override {
+            return required_lower_bits_ + required_upper_bits_;
+        }
+
+        void encode(uint8_t *buf_out, uint8_t &ext_meta) const override {
+            using details::bits64::bit_view;
+
+            ext_meta = static_cast<uint8_t>(lower_width_);
+            
+            bit_view lower_view(reinterpret_cast<uint64_t *>(buf_out), bit_view::dont_care_size);
+            for (size_t i = 0, offset = 0; i < num_; ++i, offset += lower_width_) {
+                uint64_t val = first_[i];
+                lower_view.set_bits(offset, lower_width_, val);
+            }
+
+            const size_t lower_bytes = required_lower_bits_ / CHAR_BIT;
+            bit_view upper_view(reinterpret_cast<uint64_t *>(buf_out + lower_bytes), bit_view::dont_care_size);
+            upper_view.set_all_bits(0, required_upper_bits_);
+            
+            const size_t num_buckets = first_[num_ - 1] >> lower_width_;
+            auto iter = first_;
+            auto end_iter = first_ + num_;
+            for (size_t i = 0, zero_index = 0; i <= num_buckets; ++i, ++zero_index) {
+                while (iter < end_iter && ((*iter) >> lower_width_) == i) {
+                    ++iter;
+                    ++zero_index;
+                }
+                upper_view.clear_bit(zero_index);
+            }
+        }
+    
+    private:
+        RandomAccessIterT first_;
+        size_t            num_;
+        size_t            required_lower_bits_;
+        size_t            required_upper_bits_;
+        uint32_t          lower_width_;
+    };
+
+public:
+    static constexpr size_t MAX_NUM_BLOCKS = 
+        details::DEFAULT_HYBRID_PARTITION_SIZE * 2 / (sizeof(uint64_t) * CHAR_BIT);
+
+    template<typename RandomAccessIterT>
+    static std::unique_ptr<encoder_type<RandomAccessIterT>>
+    new_encoder(RandomAccessIterT first, size_t n) {
+        return std::unique_ptr<encoder_type<RandomAccessIterT>>(
+            new encoder_type<RandomAccessIterT>(first, n)
+        );
+    }
+
+    static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        using details::bits64::bit_view;
+
+        uint32_t lower_width = ext_meta;
+        auto lower_view = bit_view(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+        uint64_t lo = lower_view.get_bits(offset * lower_width, lower_width);
+        
+        const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
+            data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
+        uint64_t hi = details::bits64::select_one_blocks(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+        *res_out = (hi << lower_width) | lo;
+    }
+
+    static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        using details::bits64::bit_view;
+
+        const uint32_t lower_width = ext_meta;
+        auto lower_view = bit_view(reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)), bit_view::dont_care_size);
+
+        uint64_t hi = target >> lower_width,
+                 lo = target & (static_cast<uint64_t>(1 << lower_width) - 1);
+        
+        if (_YAEF_UNLIKELY(hi >= details::DEFAULT_HYBRID_PARTITION_SIZE)) {
+            *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
+            return;
+        }
+
+        const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
+            data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
+
+        size_t start = hi == 0 ? 0 : details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
+        size_t end = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
+        start = std::min(start, details::DEFAULT_HYBRID_PARTITION_SIZE);
+        end = std::min(end, details::DEFAULT_HYBRID_PARTITION_SIZE);
+        size_t len = end - start;
+
+        size_t base = start;
+        while (len > 0) {
+            size_t half = len / 2;
+            uint64_t val = lower_view.get_bits((base + half) * lower_width, lower_width);
+            base += static_cast<size_t>(val < lo) * (len - half);
+            len = half;
+        }
+        *res_out = base;
+    }
+};
+
+}
+
+template<typename T, typename AllocT = details::aligned_allocator<uint8_t, 64>, 
+         typename ...Methods>
+class hybrid_list {
+    static constexpr uint32_t METHOD_WIDTH = details::bits64::constexpr_bit_width<sizeof...(Methods)>::value;
+    static constexpr uint64_t METHOD_MASK = (static_cast<uint64_t>(1) << METHOD_WIDTH) - 1;
+    static constexpr size_t   PARTITION_DESC_BYTES = 6;
+    static constexpr uint64_t PARTITION_DESC_MASK = 
+        (static_cast<uint64_t>(1) << (PARTITION_DESC_BYTES * CHAR_BIT)) - 1;
+    static constexpr uint64_t PARTITION_DESC_OFFSET_MASK =
+        (static_cast<uint64_t>(1) << (32 - METHOD_WIDTH)) - 1;
+
+    using unsigned_value_type = uint64_t;
+    using method_types        = details::hybrid_method_type_list<Methods...>;
+    using alloc_traits        = std::allocator_traits<AllocT>;
+public:
+    using value_type       = T;
+    using size_type        = size_t;
+    using difference_type  = ptrdiff_t;
+    using const_reference  = const value_type &;
+    using reference        = const_reference;
+    using const_pointer    = const value_type *;
+    using pointer          = const_pointer;
+    using allocator_type   = AllocT;
+    using sample_list      = sparse_sampled_list<value_type, sample_strategy::universe>;
+
+    static constexpr size_t NUM_METHODS    = sizeof...(Methods);
+    static constexpr size_t PARTITION_SIZE = details::DEFAULT_HYBRID_PARTITION_SIZE;
+
+public:
+    hybrid_list()
+        : meta_with_alloc_(meta_data(), allocator_type{}) { }
+
+    hybrid_list(const hybrid_list &other)
+        : hybrid_list() {
+        get_meta() = other.get_meta();
+        partition_samples_ = other.partition_samples_;
+        
+        const size_type num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        partition_descs_ = alloc_traits::allocate(get_alloc(), 
+            details::bits64::align_to<8>(PARTITION_DESC_BYTES * num_partitions));
+        std::uninitialized_copy_n(other.partition_descs_, PARTITION_DESC_BYTES * num_partitions, partition_descs_);
+        data_ = alloc_traits::allocate(get_alloc(), get_data_bytes());
+        std::uninitialized_copy_n(other.data_, get_data_bytes(), data_);
+    }
+
+    hybrid_list(hybrid_list &&other) noexcept
+        : meta_with_alloc_(std::move(other.meta_with_alloc_)),
+          partition_samples_(std::move(other.partition_samples_)),
+          partition_descs_(details::exchange(other.partition_descs_, nullptr)),
+          data_(details::exchange(other.data_, other.data_)) { }
+    
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    hybrid_list(RandomAccessIterT first, SentIterT last)
+        : hybrid_list() {
+        if (!details::is_sorted(first, last)) {
+            throw std::invalid_argument("hybrid_list::hybrid_list: the input data is not sorted");
+        }
+        size_type num = details::iter_distance(first, last);
+        unchecked_init(first, num);
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    hybrid_list(from_sorted_t, RandomAccessIterT first, SentIterT last)
+        : hybrid_list() {
+        size_type num = details::iter_distance(first, last);
+        unchecked_init(first, num);
+    }
+
+    hybrid_list(std::initializer_list<value_type> initlist)
+        : hybrid_list(initlist.begin(), initlist.end()) { }
+
+    hybrid_list(from_sorted_t, std::initializer_list<value_type> initlist)
+        : hybrid_list(from_sorted, initlist.begin(), initlist.end()) { }
+
+    ~hybrid_list() {
+        if (partition_descs_) {
+            alloc_traits::deallocate(get_alloc(), partition_descs_, 
+                PARTITION_DESC_BYTES * details::bits64::idiv_ceil(size(), PARTITION_SIZE));
+            partition_descs_ = nullptr;
+        }
+        if (data_) {
+            alloc_traits::deallocate(get_alloc(), data_, get_data_bytes());
+            data_ = nullptr;
+        }
+    }
+
+    hybrid_list &operator=(const hybrid_list &other) {
+        hybrid_list cpy(other);
+        swap(cpy);
+        return *this;
+    }
+
+    hybrid_list &operator=(hybrid_list &&other) noexcept {
+        meta_with_alloc_.value() = std::move(other.meta_with_alloc_.value());
+        partition_samples_ = std::move(other.partition_samples_);
+        partition_descs_ = details::exchange(other.partition_descs_, nullptr);
+        data_ = details::exchange(other.data_, nullptr);
+        return *this;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return get_meta().size; }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
+        const size_t num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        return partition_samples_.space_usage_in_bytes() +
+               PARTITION_DESC_BYTES * num_partitions +
+               get_meta().data_bytes;
+    }
+
+    _YAEF_ATTR_NODISCARD value_type at(size_type index) const {
+        _YAEF_ASSERT(index < size());
+
+        const size_type partition_index = index / PARTITION_SIZE,
+                        partition_offset = index % PARTITION_SIZE;
+        value_type sample = partition_samples_.at(partition_index);
+        if (_YAEF_UNLIKELY(partition_offset == 0)) {
+            return to_actual_value(sample);
+        }
+
+        const uint64_t partition_desc = *reinterpret_cast<const uint64_t *>(
+            partition_descs_ + PARTITION_DESC_BYTES * partition_index) & PARTITION_DESC_MASK;
+
+        const size_type method_idx = partition_desc & METHOD_MASK;
+        const size_type buf_offset = (partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK;
+        const uint8_t ext_meta = partition_desc >> 40;
+        const uint8_t *buf = data_ + (buf_offset * 8);
+
+        uint64_t inner_val = method_types::dispatch_at(method_idx, partition_offset, buf, ext_meta);
+        return to_actual_value(sample + inner_val);
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const {
+        return at(index);
+    }
+    
+    _YAEF_ATTR_NODISCARD value_type min() const {
+        _YAEF_ASSERT(!empty());
+        return get_meta().min;
+    }
+
+    _YAEF_ATTR_NODISCARD value_type max() const {
+        _YAEF_ASSERT(!empty());
+        return get_meta().max;
+    }
+
+    _YAEF_ATTR_NODISCARD value_type front() const { return min(); }
+    _YAEF_ATTR_NODISCARD value_type back() const { return max(); }
+
+    _YAEF_ATTR_NODISCARD size_type index_of_lower_bound(value_type target) const {
+        if (_YAEF_UNLIKELY(target <= min())) { return 0; }
+        if (_YAEF_UNLIKELY(target > max())) { return size(); }
+
+        unsigned_value_type t = to_stored_value(target);
+        
+        auto sample_iter = partition_samples_.upper_bound(t) - 1;
+        unsigned_value_type sample = *sample_iter;
+        size_type partition_index = std::distance(partition_samples_.begin(), sample_iter);
+        
+        const uint64_t partition_desc = *reinterpret_cast<const uint64_t *>(
+            partition_descs_ + PARTITION_DESC_BYTES * partition_index) & PARTITION_DESC_MASK;
+        const size_type method_idx = partition_desc & METHOD_MASK;
+        const size_type buf_offset = ((partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK) * 8;
+        const uint8_t ext_meta = partition_desc >> 40;
+        const uint8_t *buf = data_ + buf_offset;
+
+        t -= sample;
+        if (_YAEF_UNLIKELY(t == 0)) {
+            return std::min(partition_index * PARTITION_SIZE, size() - 1);
+        }
+
+        uint64_t idx = method_types::dispatch_index_of_lower_bound(method_idx, t, buf, ext_meta);
+        return partition_index * PARTITION_SIZE + idx;
+    }
+
+    void swap(hybrid_list &other) noexcept {
+        get_meta().swap(other.get_meta());
+        details::checked_swap_alloc(get_alloc(), other.get_alloc());
+        partition_samples_.swap(other.partition_samples_);
+        std::swap(partition_descs_, other.partition_descs_);
+        std::swap(data_, other.data_);
+    }
+
+private:
+    struct meta_data {
+        value_type min  = std::numeric_limits<value_type>::max();
+        value_type max  = std::numeric_limits<value_type>::min();
+        size_type  size = 0;
+        size_type  data_bytes = 0;
+        bool       has_duplicates = false;
+
+        meta_data() = default;
+
+        meta_data(const meta_data &other)
+            : min(other.min), max(other.max), size(other.size),
+              data_bytes(other.data_bytes), has_duplicates(other.has_duplicates) { }
+
+        error_code serialize(details::serializer &ser) const {
+            if (!ser.write(min)) { return error_code::serialize_io; }
+            if (!ser.write(max)) { return error_code::serialize_io; }
+            if (!ser.write(size)) { return error_code::serialize_io; }
+            if (!ser.write(data_bytes)) { return error_code::serialize_io; }
+            if (!ser.write(has_duplicates)) { return error_code::serialize_io; }
+            return error_code::success;
+        }
+        
+        error_code deserialize(details::deserializer &deser) {
+            if (!deser.read(min)) { return error_code::deserialize_io; }
+            if (!deser.read(max)) { return error_code::deserialize_io; }
+            if (!deser.read(size)) { return error_code::deserialize_io; }
+            if (!deser.read(data_bytes)) { return error_code::deserialize_io; }
+            if (!deser.read(has_duplicates)) { return error_code::deserialize_io; }
+            return error_code::success;
+        }
+
+        void swap(meta_data &other) {
+            std::swap(min, other.min);
+            std::swap(max, other.max);
+            std::swap(size, other.size);
+            std::swap(data_bytes, other.data_bytes);
+            std::swap(has_duplicates, other.has_duplicates);
+        }
+    };
+
+    using meta_with_alloc = details::value_with_allocator_pair<meta_data, allocator_type>;
+
+    meta_with_alloc    meta_with_alloc_;
+    sample_list        partition_samples_;
+    uint8_t           *partition_descs_ = nullptr;
+    uint8_t           *data_            = nullptr;
+
+    _YAEF_ATTR_NODISCARD const meta_data &get_meta() const { return meta_with_alloc_.value(); }
+    _YAEF_ATTR_NODISCARD meta_data &get_meta() { return meta_with_alloc_.value(); }
+    _YAEF_ATTR_NODISCARD allocator_type &get_alloc() { return meta_with_alloc_.alloc(); }
+    _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const { return meta_with_alloc_.alloc(); }
+
+    _YAEF_ATTR_NODISCARD size_type get_data_bytes() const noexcept {
+        return details::bits64::align_to<32>(get_meta().data_bytes);
+    }
+
+    _YAEF_ATTR_NODISCARD value_type to_actual_value(unsigned_value_type v) const noexcept {
+        return static_cast<value_type>(v + min());
+    }
+
+    _YAEF_ATTR_NODISCARD unsigned_value_type to_stored_value(value_type v) const noexcept {
+        return static_cast<unsigned_value_type>(v) - static_cast<unsigned_value_type>(min());
+    }
+
+    error_code do_serialize(details::serializer &ser) const {
+        error_code ec = get_meta().serialize(ser);
+        if (ec != error_code::success) { return ec; }
+        ec = details::serialize_friend_access::serialize(partition_samples_, ser);
+        if (ec != error_code::success) { return ec; }
+        const size_type num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        if (!ser.write_bytes(partition_descs_, PARTITION_DESC_BYTES * num_partitions)) {
+            return error_code::serialize_io;
+        }
+        if (!ser.write_bytes(data_, get_meta().data_bytes)) {
+            return error_code::serialize_io;
+        }
+        return error_code::success;
+    }
+
+    error_code do_deserialize(details::deserializer &deser) {
+        error_code ec = get_meta().deserialize(deser);
+        if (ec != error_code::success) { return ec; }
+        ec = details::serialize_friend_access::deserialize(partition_samples_, deser);
+        if (ec != error_code::success) { return ec; }
+        const size_type num_partitions = details::bits64::idiv_ceil(size(), PARTITION_SIZE);
+        partition_descs_ = alloc_traits::allocate(get_alloc(), 
+            details::bits64::align_to<8>(PARTITION_DESC_BYTES * num_partitions));
+        if (!deser.read_bytes(partition_descs_, PARTITION_DESC_BYTES * num_partitions)) {
+            return error_code::deserialize_io;
+        }
+        data_ = alloc_traits::allocate(get_alloc(), get_data_bytes());
+        if (!deser.read_bytes(data_, get_meta().data_bytes)) {
+            return error_code::deserialize_io;
+        }
+        return error_code::success;
+    }
+
+    template<typename RandomAccessIterT>
+    void unchecked_init(RandomAccessIterT first, size_type n) {
+        using iter_adaptor = details::hybrid_encoding_iterator_adaptor<RandomAccessIterT>;
+
+        if (_YAEF_UNLIKELY(n == 0)) {
+            return;
+        }
+
+        meta_data &meta = get_meta();
+        meta.min = first[0];
+        meta.max = first[n - 1];
+        meta.size = n;
+
+        for (size_type i = 1; i < n; ++i) {
+            if (first[i] == first[i - 1]) {
+                meta.has_duplicates = true;
+                break;
+            }
+        }
+
+        const size_type num_partitions = details::bits64::idiv_ceil(n, PARTITION_SIZE);
+
+        std::vector<unsigned_value_type> samples(num_partitions + 1);
+        for (size_type i = 0; i < n; i += PARTITION_SIZE) {
+            samples[i / PARTITION_SIZE] = to_stored_value(first[i]);
+        }
+        samples[num_partitions] = to_stored_value(max());
+        partition_samples_ = sample_list(from_sorted, samples.begin(), samples.end());
+
+        const size_type partition_desc_space_bytes = 
+            details::bits64::align_to<8>(PARTITION_DESC_BYTES * num_partitions);
+        partition_descs_ = alloc_traits::allocate(get_alloc(), partition_desc_space_bytes);
+        std::uninitialized_fill_n(partition_descs_, partition_desc_space_bytes, 0);
+
+        std::vector<std::unique_ptr<hybrid_method_encoder>> encoders(num_partitions);
+        using method_selector = details::hybrid_method_selector<typename method_types::tuple_type, NUM_METHODS>;
+
+        size_type code_offset = 0;
+        size_type required_bits = 0;
+        for (size_type i = 0; i < num_partitions; ++i) {
+            const unsigned_value_type sample = samples[i];
+            const size_type partition_size = std::min<size_type>(n - i * PARTITION_SIZE, (size_type) PARTITION_SIZE);
+
+            iter_adaptor iter(first + i * PARTITION_SIZE, min(), sample);
+            auto select_res = method_selector::select(iter, partition_size);
+            encoders[i] = std::move(std::get<0>(select_res));
+            size_type method_idx = std::get<1>(select_res);
+            size_type encode_bits = details::bits64::align_to<64>(encoders[i]->required_bits());
+            
+            uint64_t partition_desc = static_cast<uint64_t>(method_idx) | (code_offset << METHOD_WIDTH);
+            (*reinterpret_cast<uint64_t *>(partition_descs_ + PARTITION_DESC_BYTES * i)) |= partition_desc;
+
+            code_offset += encode_bits / 64;
+            required_bits += encode_bits;    
+        }
+
+        size_type required_bytes = details::bits64::idiv_ceil(required_bits, CHAR_BIT);
+        meta.data_bytes = required_bytes;
+        data_ = alloc_traits::allocate(get_alloc(), get_data_bytes());
+
+        for (size_type i = 0; i < num_partitions; ++i) {
+            const uint64_t partition_desc = 
+                *reinterpret_cast<uint64_t *>(partition_descs_ + PARTITION_DESC_BYTES * i) & PARTITION_DESC_MASK;
+            const size_type byte_offset = ((partition_desc >> METHOD_WIDTH) & PARTITION_DESC_OFFSET_MASK) * 8;
+            uint8_t *buf = data_ + byte_offset;
+            uint8_t *ext_meta_byte_ptr = partition_descs_ + PARTITION_DESC_BYTES * i + 5;
+            encoders[i]->encode(buf, *ext_meta_byte_ptr);
+        }
     }
 };
 

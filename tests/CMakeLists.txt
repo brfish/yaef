@@ -24,6 +24,9 @@ yaef_add_test(eliasfano_sequence_test "eliasfano_sequence_test.cpp")
 # eliasfano_sequence_test
 yaef_add_test(eliasfano_sparse_bitmap_test "eliasfano_sparse_bitmap_test.cpp")
 
+# hybrid_list_test
+yaef_add_test(hybrid_list_test "hybrid_list_test.cpp")
+
 # packed_int_view_test
 yaef_add_test(packed_int_view_test "packed_int_view_test.cpp")
 

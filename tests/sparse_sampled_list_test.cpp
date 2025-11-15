@@ -125,9 +125,9 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
         list_type sl1(data.begin(), data.end());
         list_type sl2 = {1, 2, 3};
         size_t size1 = sl1.size();
-        int32_t max1 = sl1.max();
+        uint32_t max1 = sl1.max();
         size_t size2 = sl2.size();
-        int32_t max2 = sl2.max();
+        uint32_t max2 = sl2.max();
         sl1.swap(sl2);
         REQUIRE(sl1.size() == size2);
         REQUIRE(sl1.max() == max2);
@@ -225,9 +225,6 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
                         std::lower_bound(random_data.begin(), random_data.end(), target));
                     
                     size_t actual_lower_idx = sl.index_of_lower_bound(target);
-                    if (expected_lower_idx != actual_lower_idx) {
-                        size_t _ = sl.index_of_lower_bound(target);
-                    }
 
                     REQUIRE(actual_lower_idx == expected_lower_idx);
                     REQUIRE(sl.data() + expected_lower_idx == sl.lower_bound(target));
@@ -235,9 +232,6 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
                     size_t expected_upper_idx = std::distance(random_data.begin(), 
                         std::upper_bound(random_data.begin(), random_data.end(), target));
                     size_t actual_upper_idx = sl.index_of_upper_bound(target);
-                    if (expected_upper_idx != actual_upper_idx) {
-                        size_t _ = sl.index_of_upper_bound(target);
-                    }
 
                     REQUIRE(actual_upper_idx == expected_upper_idx);
                     REQUIRE(sl.data() + expected_upper_idx == sl.upper_bound(target));
