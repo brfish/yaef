@@ -33,7 +33,7 @@ if(MSVC)
 else()
   set(YAEF_AVX512_COPTS
     "-mavx512f" "-mavx512vl" "-mavx512bw" "-mavx512dq" 
-    "-mavx512vbmi" "-mavx512vbmi2" "-mavx512vpopcntdg" "-mavx512bitalg"
+    "-mavx512vbmi" "-mavx512vbmi2" "-mavx512vpopcntdq" "-mavx512bitalg"
   )
   string(JOIN " " YAEF_AVX512_COPTS_STRING "${YAEF_AVX512_COPTS}")
 
@@ -60,6 +60,7 @@ target_include_directories(yaef INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 if(YAEF_HAVE_AVX512)
   yaef_info("AVX-512 enabled")
   target_compile_definitions(yaef INTERFACE _YAEF_INTRINSICS_HAVE_AVX512)
+  target_compile_options(yaef INTERFACE ${YAEF_AVX512_COPTS})
 endif()
 
 if(MSVC)
