@@ -2224,10 +2224,10 @@ public:
     using const_pointer   = const T *;
     using reference       = T &;
     using const_reference = const T &;
+#endif
 
     template<typename U, size_t A = Alignment>
     struct rebind { using other = aligned_allocator<U, A>; };
-#endif
 
 #if __cplusplus < 202302L
     using is_always_equal = std::true_type;
@@ -6206,6 +6206,7 @@ public:
     static void name(std::string *out) { *out = "eliasgamma_gap"; }
 
     static void at(size_t offset, const uint8_t *data, uint8_t ext_meta, uint64_t *res_out) {
+        constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         using details::bits64::bit_view;
         
         auto unary_data = reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data));
@@ -6215,28 +6216,27 @@ public:
             reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)) + num_unary_blocks, bit_view::dont_care_size);
         auto body_reader = body_view.new_reader();
         
-        uint8_t prv_zeros = 0;
         uint64_t res = 0;
+        size_t prv_one_pos = -1;
         for (size_t i = 0, j = 0; j < offset && i < num_unary_blocks; ++i) {
             uint64_t block = unary_data[i];
-            uint8_t unconsumed_bits = 64;
-            while (j < offset && block != 0) {
-                uint64_t num_zeros = details::bits64::count_trailing_zero(block);
-                uint8_t w = num_zeros + prv_zeros;
-                prv_zeros = 0;
-                block >>= num_zeros + 1;
-                unconsumed_bits -= num_zeros + 1;
+            while (j < offset && block) {
+                uint64_t t = block & -block;
+                size_t one_pos = BLOCK_WIDTH * i + details::bits64::count_trailing_zero(block);
+                block ^= t;
+                uint32_t w = one_pos - prv_one_pos - 1;
+                prv_one_pos = one_pos;
                 uint64_t body = body_reader.read_bits(w);
                 uint64_t gap = details::bits64::set_bit(body, w);
                 res += gap;
                 ++j;
             }
-            prv_zeros = unconsumed_bits;
         }
         *res_out = res;
     }
 
     static void index_of_lower_bound(size_t target, const uint8_t *data, uint8_t ext_meta, size_t *res_out) {
+        constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
         using details::bits64::bit_view;
 
         auto unary_data = reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data));
@@ -6245,18 +6245,17 @@ public:
         auto body_view = bit_view(
             reinterpret_cast<uint64_t *>(const_cast<uint8_t *>(data)) + num_unary_blocks, bit_view::dont_care_size);
         auto body_reader = body_view.new_reader();
-        
-        uint16_t prv_zeros = 0;
+
         uint64_t val = 0;
+        size_t prv_one_pos = -1;
         for (size_t i = 0, j = 0; j < details::DEFAULT_HYBRID_PARTITION_SIZE - 1 && i < num_unary_blocks; ++i) {
             uint64_t block = unary_data[i];
-            uint8_t unconsumed_bits = 64;
-            while (block != 0) {
-                uint64_t num_zeros = details::bits64::count_trailing_zero(block);;
-                uint8_t w = num_zeros + prv_zeros;
-                prv_zeros = 0;
-                block >>= num_zeros + 1;
-                unconsumed_bits -= num_zeros + 1;
+            while (block) {
+                uint64_t t = block & -block;
+                size_t one_pos = BLOCK_WIDTH * i + details::bits64::count_trailing_zero(block);
+                block ^= t;
+                uint32_t w = one_pos - prv_one_pos - 1;
+                prv_one_pos = one_pos;
                 uint64_t body = body_reader.read_bits(w);
                 uint64_t gap = details::bits64::set_bit(body, w);
                 val += gap;
@@ -6266,7 +6265,6 @@ public:
                 }
                 ++j;
             }
-            prv_zeros = unconsumed_bits;
         }
         *res_out = details::DEFAULT_HYBRID_PARTITION_SIZE;
     }
@@ -6471,7 +6469,7 @@ public:
         
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
-        uint64_t hi = details::bits64::select_one_blocks(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+        uint64_t hi = details::bits64::select_one_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
         *res_out = (hi << lower_width) | lo;
     }
 
@@ -6514,6 +6512,7 @@ public:
 template<typename T, typename AllocT = details::aligned_allocator<uint8_t, 64>, 
          typename ...Methods>
 class hybrid_list {
+    friend struct details::serialize_friend_access;
     static constexpr uint32_t METHOD_WIDTH = details::bits64::constexpr_bit_width<sizeof...(Methods)>::value;
     static constexpr uint64_t METHOD_MASK = (static_cast<uint64_t>(1) << METHOD_WIDTH) - 1;
     static constexpr size_t   PARTITION_DESC_BYTES = 6;
