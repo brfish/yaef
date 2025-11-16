@@ -1657,6 +1657,25 @@ public:
         return val;
     }
 
+    _YAEF_ATTR_NODISCARD std::array<uint16_t, 4> read_bits_4x16(std::array<uint16_t, 4> width4) {
+        uint16_t total_bits = width4[0] + width4[1] + width4[2] + width4[3];
+        if (_YAEF_UNLIKELY(total_bits > buf_size_)) {
+            refill();
+        }
+
+        uint64_t width_packed;
+        memcpy(&width_packed, width4.data(), sizeof(width4));
+        __m128i counts_vec = _mm_cvtsi64_si128(width_packed);
+        __m128i ones_vec = _mm_set1_epi16(1);
+        __m128i shifted = _mm_sllv_epi16(ones_vec, counts_vec);
+        uint64_t mask = _mm_cvtsi128_si64(_mm_sub_epi16(shifted, ones_vec));
+
+        uint64_t packed_data = _pdep_u64(static_cast<uint64_t>(buf_), mask);
+        std::array<uint16_t, 4> res;
+        memcpy(res.data(), &packed_data, sizeof(packed_data));
+        return res;
+    }
+
     _YAEF_ATTR_NODISCARD uint64_t peek_bits(uint32_t width) {
         if (_YAEF_UNLIKELY(width > buf_size_)) {
             refill();
@@ -6393,7 +6412,7 @@ public:
         
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
-        uint64_t hi = details::bits64::select_one_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+        uint64_t hi = details::bits64::select_one_blocks(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
         *res_out = (hi << lower_width) | lo;
     }
 
@@ -6414,8 +6433,8 @@ public:
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
 
-        size_t start = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
-        size_t end = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
+        size_t start = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
+        size_t end = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
         start = std::min(start, details::DEFAULT_HYBRID_PARTITION_SIZE);
         end = std::min(end, details::DEFAULT_HYBRID_PARTITION_SIZE);
         size_t len = end - start;

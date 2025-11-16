@@ -12,6 +12,7 @@ class hybrid_list_benchmark : public benchmark<IntT, hybrid_list_benchmark<IntT>
         yaef::hybrid_methods::linear,
         yaef::hybrid_methods::bitmap,
         yaef::hybrid_methods::eliasfano,
+        yaef::hybrid_methods::fixed,
         yaef::hybrid_methods::eliasgamma_unique_gap
     >;
 public:
