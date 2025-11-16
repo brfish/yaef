@@ -37,6 +37,7 @@
 #include <ostream>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <immintrin.h>
 
@@ -321,15 +322,15 @@ _YAEF_ATTR_FORCEINLINE void prefetch_write(void *p) noexcept {
 #endif
 }
 
-#if !_YAEF_USE_CXX_CONCEPTS
-#   if __cpp_lib_void_t >= 201411L
+#if __cpp_lib_void_t >= 201411L
 template<typename ...Ts>
 using void_t = std::void_t<Ts...>;
-#   else
+#else
 template<typename ...>
 using void_t = void;
-#   endif
+#endif
 
+#if !_YAEF_USE_CXX_CONCEPTS
 #   if __cpp_lib_remove_cvref >= 201711L
 template<typename T>
 using remove_cvref = std::remove_cvref<T>;
@@ -397,7 +398,7 @@ template<typename T, template<typename> class Constraint, typename = void>
 struct iterator_value_type_constraint : std::false_type { };
 
 template<typename T, template<typename> class Constraint>
-struct iterator_value_type_constraint<T, Constraint, void_t<typename std::iterator_traits<T>::value_type>> 
+struct iterator_value_type_constraint<T, Constraint, details::void_t<typename std::iterator_traits<T>::value_type>> 
     : std::integral_constant<bool, Constraint<typename std::iterator_traits<T>::value_type>::value> { };
 
 #if _YAEF_USE_CXX_CONCEPTS
