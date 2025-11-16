@@ -3437,6 +3437,25 @@ public:
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const noexcept { return get_alloc(); }
     _YAEF_ATTR_NODISCARD bool has_duplicates() const { return has_duplicates_; }
 
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    _YAEF_ATTR_NODISCARD static size_type 
+    estimate_required_bits(RandomAccessIterT first, SentIterT last) {
+        using encoder_type = details::eliasfano_encoder_scalar_impl<value_type, RandomAccessIterT, SentIterT>;
+        size_type num_elems = details::iter_distance(first, last);
+        if (num_elems == 0) {
+            return 0;
+        }
+        auto minval = first[0];
+        auto maxval = first[num_elems - 1];
+        const auto u = static_cast<unsigned_value_type>(maxval) - static_cast<unsigned_value_type>(minval);
+        const uint32_t low_width = details::bits64::bit_width(u / num_elems);
+        maxval -= minval;
+        minval = 0;
+        encoder_type encoder{first, last, num_elems, minval, maxval, low_width};
+        return encoder.estimate_low_size_in_bits() + 
+               static_cast<size_type>(static_cast<double>(encoder.estimate_high_size_in_bits()) * 1.25);
+    }
+
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
         return high_bits_.space_usage_in_bytes() +
                get_low_bits().space_usage_in_bytes();
@@ -3870,14 +3889,15 @@ template<typename T, typename AllocT = details::aligned_allocator<uint8_t, 32>>
 class eliasfano_sequence {
     friend struct details::serialize_friend_access;
 
-    using alloc_traits    = std::allocator_traits<AllocT>;
+    using alloc_traits        = std::allocator_traits<AllocT>;
+    using unsigned_value_type = uint64_t;
 public:
-    using value_type      = T;
-    using size_type       = size_t;
-    using difference_type = ptrdiff_t;
-    using const_iterator  = details::eliasfano_bidirectional_iterator<T>;
-    using iterator        = const_iterator;
-    using allocator_type  = AllocT;
+    using value_type          = T;
+    using size_type           = size_t;
+    using difference_type     = ptrdiff_t;
+    using const_iterator      = details::eliasfano_bidirectional_iterator<T>;
+    using iterator            = const_iterator;
+    using allocator_type      = AllocT;
 
 public:
     eliasfano_sequence()
@@ -3993,6 +4013,23 @@ public:
         const size_type num_low_bits = size_ * low_width_;
         return details::bits64::idiv_ceil_nzero(num_high_bits, BLOCK_WIDTH) * sizeof(uint64_t) +
                details::bits64::idiv_ceil(num_low_bits, BLOCK_WIDTH) * sizeof(uint64_t);
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    _YAEF_ATTR_NODISCARD static size_type 
+    estimate_required_bits(RandomAccessIterT first, SentIterT last) {
+        size_type num_elems = details::iter_distance(first, last);
+        if (num_elems == 0) {
+            return 0;
+        }
+        auto minval = first[0];
+        auto maxval = first[num_elems - 1];
+        const auto u = static_cast<unsigned_value_type>(maxval) - static_cast<unsigned_value_type>(minval);
+        const uint32_t low_width = details::bits64::bit_width(u / num_elems);
+        const size_type num_buckets = u >> low_width;
+        const size_type num_high_bits = num_elems + num_buckets + 1;
+        const size_type num_low_bits = num_elems * low_width;
+        return num_low_bits + num_high_bits;
     }
 
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const noexcept { return allocator_type{get_alloc()}; }
@@ -5154,7 +5191,28 @@ public:
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const { return allocator_type(get_alloc()); }
 
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const {
-        return sizeof(value_type) * get_num_samples() + sizeof(value_type) * size_;
+        const size_type data_usage = sizeof(value_type) * size_;
+        const size_type sample_usage = SAMPLE_STRATEGY == sample_strategy::cardinality
+            ? sizeof(value_type) * get_num_samples() : sizeof(size_type) * get_num_samples();
+        return data_usage + sample_usage;
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    _YAEF_ATTR_NODISCARD static size_type 
+    estimate_required_bits(RandomAccessIterT first, SentIterT last) {
+        const size_type num_elems = details::iter_distance(first, last);
+
+        size_type num_sample_bits = 0;
+        if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::cardinality) {
+            num_sample_bits = details::bits64::idiv_ceil(num_elems, SAMPLE_RATE) * sizeof(value_type) * CHAR_BIT;
+        } else if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::universe) {
+            const auto minval = first[0];
+            const auto maxval = first[num_elems - 1];
+            const uint64_t u = static_cast<uint64_t>(maxval) - static_cast<uint64_t>(minval);
+            num_sample_bits = (details::bits64::idiv_ceil(u, SAMPLE_RATE) + 1) * sizeof(size_type) * CHAR_BIT;
+        }
+        
+        return num_sample_bits + num_elems * sizeof(value_type) * CHAR_BIT;
     }
 
     _YAEF_ATTR_NODISCARD value_type min() const _YAEF_MAYBE_NOEXCEPT {
@@ -6561,6 +6619,48 @@ public:
         return partition_samples_.space_usage_in_bytes() +
                PARTITION_DESC_BYTES * num_partitions +
                get_meta().data_bytes;
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
+    _YAEF_ATTR_NODISCARD static size_type 
+    estimate_required_bits(RandomAccessIterT first, SentIterT last) {
+        using iter_adaptor = details::hybrid_encoding_iterator_adaptor<RandomAccessIterT>;
+
+        const size_type num_elems = details::iter_distance(first, last);
+        if (_YAEF_UNLIKELY(num_elems == 0)) {
+            return 0;
+        }
+
+        const size_type num_partitions = details::bits64::idiv_ceil(num_elems, PARTITION_SIZE);
+        const value_type minval = first[0];
+
+        const size_type num_samples = num_partitions + 1;
+        const unsigned_value_type sample_range =
+            static_cast<unsigned_value_type>(first[num_elems - 1]) -
+            static_cast<unsigned_value_type>(first[0]);
+        const size_type samples_bits = 
+            (details::bits64::idiv_ceil(sample_range, sample_list::SAMPLE_RATE) + 1) * sizeof(size_type) * CHAR_BIT +
+            num_samples * sizeof(value_type);
+
+        const size_type partition_desc_bits = PARTITION_DESC_BYTES * num_partitions * CHAR_BIT;
+
+        using method_selector = details::hybrid_method_selector<typename method_types::tuple_type, NUM_METHODS>;
+
+        size_type required_bits = 0;
+        for (size_type i = 0; i < num_partitions; ++i) {
+            const unsigned_value_type sample = 
+                static_cast<unsigned_value_type>(first[i * PARTITION_SIZE]) -
+                static_cast<unsigned_value_type>(minval);
+
+            const size_type partition_size = std::min<size_type>(
+                num_elems - i * PARTITION_SIZE, (size_type) PARTITION_SIZE);
+
+            iter_adaptor iter(first + i * PARTITION_SIZE, minval, sample);
+            auto select_res = method_selector::select(iter, partition_size);
+            size_type encoded_bits = details::bits64::align_to<64>(std::get<0>(select_res)->required_bits());
+            required_bits += encoded_bits;    
+        }
+        return samples_bits + partition_desc_bits + required_bits;
     }
 
     _YAEF_ATTR_NODISCARD std::vector<hybrid_method_stat_entry> method_stats() const {
