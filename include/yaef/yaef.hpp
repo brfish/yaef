@@ -450,6 +450,11 @@ _YAEF_ATTR_NODISCARD inline ptrdiff_t iter_distance(InputIterT first, SentIterT 
 #endif
 }
 
+struct identity_project {
+    template<typename T>
+    T operator()(T val) const { return val; }
+};
+
 template<typename InputIterT, typename SentIterT>
 _YAEF_ATTR_NODISCARD inline typename std::iterator_traits<InputIterT>::value_type
 find_max_value(InputIterT first, SentIterT last) {
@@ -473,25 +478,27 @@ _YAEF_ATTR_NODISCARD inline bool is_sorted(ForwardIterT first, SentIterT last) {
 #endif
 }
 
-template<typename RandomAccessIter, typename T>
-_YAEF_ATTR_NODISCARD inline RandomAccessIter branchless_lower_bound(RandomAccessIter first, size_t n, T target) {
+template<typename RandomAccessIter, typename T, typename ProjectT = identity_project>
+_YAEF_ATTR_NODISCARD inline RandomAccessIter 
+branchless_lower_bound(RandomAccessIter first, size_t n, T target, const ProjectT &project = ProjectT()) {
     RandomAccessIter base = first;
     size_t len = n;
     while (len > 0) {
         size_t half = len / 2;
-        base += (base[half] < target) * (len - half);
+        base += (project(base[half]) < target) * (len - half);
         len = half;
     }
     return base;
 }
 
-template<typename RandomAccessIter, typename T>
-_YAEF_ATTR_NODISCARD inline RandomAccessIter branchless_upper_bound(RandomAccessIter first, size_t n, T target) {
+template<typename RandomAccessIter, typename T, typename ProjectT = identity_project>
+_YAEF_ATTR_NODISCARD inline RandomAccessIter 
+branchless_upper_bound(RandomAccessIter first, size_t n, T target, const ProjectT &project = ProjectT()) {
     RandomAccessIter base = first;
     size_t len = n;
     while (len > 0) {
         size_t half = len / 2;
-        base += (base[half] <= target) * (len - half);
+        base += (project(base[half]) <= target) * (len - half);
         len = half;
     }
     return base;
@@ -6469,7 +6476,12 @@ public:
         
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
+
+#if _YAEF_INTRINSICS_HAVE_AVX512
         uint64_t hi = details::bits64::select_one_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+#else
+        uint64_t hi = details::bits64::select_one_blocks(upper_addr, MAX_NUM_BLOCKS, offset) - offset;
+#endif
         *res_out = (hi << lower_width) | lo;
     }
 
@@ -6490,8 +6502,13 @@ public:
         const uint64_t *upper_addr = reinterpret_cast<const uint64_t *>(
             data + details::DEFAULT_HYBRID_PARTITION_SIZE * lower_width / CHAR_BIT);
 
+#if _YAEF_INTRINSICS_HAVE_AVX512
+        size_t start = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
+        size_t end = details::bits64::select_zero_blocks_512_avx512(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
+#else
         size_t start = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi - 1) - hi + 1;
         size_t end = details::bits64::select_zero_blocks(upper_addr, MAX_NUM_BLOCKS, hi) - hi;
+#endif
         start = std::min(start, details::DEFAULT_HYBRID_PARTITION_SIZE);
         end = std::min(end, details::DEFAULT_HYBRID_PARTITION_SIZE);
         size_t len = end - start;
