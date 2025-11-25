@@ -6176,7 +6176,7 @@ private:
                 return error_code::serialize_io; 
             }
         }
-        error_code ec = details::serialize_friend_access::serialize(data_, ser);
+        error_code ec = data_.serialize(ser);
         if (ec != error_code::success) {
             return ec;
         }
@@ -6199,7 +6199,7 @@ private:
             }
         }
 
-        error_code ec = details::serialize_friend_access::deserialize(data_, deser);
+        error_code ec = data_.deserialize(balloc, deser);
         if (ec != error_code::success) {
             return ec;
         }
