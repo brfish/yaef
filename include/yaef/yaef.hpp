@@ -1437,14 +1437,149 @@ select_zero_blocks_1024_avx512(const uint64_t *blocks, size_t num_blocks, size_t
 }
 #endif
 
+template <typename Base>
+class readonly_random_access_proxy_iterator {
+public:
+    using iterator_category = std::random_access_iterator_tag;
+    using value_type        = typename Base::value_type;
+    using difference_type   = std::ptrdiff_t;
+    using reference         = value_type;
+
+    struct pointer {
+        template<typename>
+        friend class readonly_random_access_proxy_iterator;
+
+        const value_type* operator->() const {
+            return &val_;
+        }
+    private:
+        value_type val_;
+
+        explicit pointer(value_type val)
+            : val_(val) { } 
+    };
+
+public:
+    readonly_random_access_proxy_iterator() = default;
+    readonly_random_access_proxy_iterator(const Base &base, size_t index)
+        : base_(std::addressof(base)), index_(index) { }
+
+    readonly_random_access_proxy_iterator(const readonly_random_access_proxy_iterator&) = default;
+    readonly_random_access_proxy_iterator& operator=(const readonly_random_access_proxy_iterator&) = default;
+
+    _YAEF_ATTR_NODISCARD reference operator*() const {
+        return (*base_)[index_];
+    }
+
+    _YAEF_ATTR_NODISCARD pointer operator->() const {
+        return pointer((*base_)[index_]);
+    }
+
+    _YAEF_ATTR_NODISCARD reference operator[](difference_type n) const {
+        return (*base_)[index_ + n];
+    }
+
+    readonly_random_access_proxy_iterator& operator++() {
+        ++index_;
+        return *this;
+    }
+
+    readonly_random_access_proxy_iterator operator++(int) {
+        readonly_random_access_proxy_iterator temp = *this;
+        ++index_;
+        return temp;
+    }
+
+    readonly_random_access_proxy_iterator& operator--() {
+        --index_;
+        return *this;
+    }
+
+    readonly_random_access_proxy_iterator operator--(int) {
+        readonly_random_access_proxy_iterator tmp = *this;
+        --index_;
+        return tmp;
+    }
+
+    readonly_random_access_proxy_iterator& operator+=(difference_type n) {
+        index_ += n;
+        return *this;
+    }
+
+    readonly_random_access_proxy_iterator& operator-=(difference_type n) {
+        index_ -= n;
+        return *this;
+    }
+
+    friend readonly_random_access_proxy_iterator 
+    operator+(readonly_random_access_proxy_iterator iter, difference_type n) {
+        iter += n;
+        return iter;
+    }
+
+    friend readonly_random_access_proxy_iterator 
+    operator+(difference_type n, readonly_random_access_proxy_iterator iter) {
+        iter += n;
+        return iter;
+    }
+
+    friend readonly_random_access_proxy_iterator 
+    operator-(readonly_random_access_proxy_iterator iter, difference_type n) {
+        iter -= n;
+        return iter;
+    }
+
+    _YAEF_ATTR_NODISCARD friend difference_type 
+    operator-(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return static_cast<difference_type>(lhs.index_) - static_cast<difference_type>(rhs.index_);
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator==(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ == rhs.index_;
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator!=(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ != rhs.index_;
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator<(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ < rhs.index_;
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator>(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ > rhs.index_;
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator<=(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ <= rhs.index_;
+    }
+
+    _YAEF_ATTR_NODISCARD friend bool 
+    operator>=(const readonly_random_access_proxy_iterator& lhs, const readonly_random_access_proxy_iterator& rhs) {
+        return lhs.index_ >= rhs.index_;
+    }
+private:
+    const Base* base_ = nullptr;
+    size_t      index_ = 0;
+};
+
 class bit_view;
 class packed_int_view;
 
+template<uint32_t>
+class wpacked_int_view;
+
 class packed_int_view {
 public:
-    using value_type = uint64_t;
-    using block_type = uint64_t;
-    using size_type  = size_t;
+    using value_type     = uint64_t;
+    using block_type     = uint64_t;
+    using size_type      = size_t;
+    using const_iterator = readonly_random_access_proxy_iterator<packed_int_view>;
     static constexpr uint32_t BLOCK_WIDTH = sizeof(block_type) * CHAR_BIT;
 
 public:
@@ -1467,6 +1602,11 @@ public:
     _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { 
         return bits64::idiv_ceil(num_elems_ * width_, BLOCK_WIDTH); 
     }
+
+    _YAEF_ATTR_NODISCARD const_iterator begin() const noexcept { return cbegin(); }
+    _YAEF_ATTR_NODISCARD const_iterator cbegin() const noexcept { return const_iterator(*this, 0); }
+    _YAEF_ATTR_NODISCARD const_iterator end() const noexcept { return cend(); }
+    _YAEF_ATTR_NODISCARD const_iterator cend() const noexcept { return const_iterator(*this, size()); }
 
     _YAEF_ATTR_NODISCARD value_type limit_min() const { return 0; }
     
@@ -1550,6 +1690,10 @@ public:
             return extract_bits(blocks_[block_index], block_offset, block_offset + width());
         }
 #endif
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {
+        return get_value(index);
     }
 
     void set_value(size_type index, value_type value) noexcept {
@@ -1647,6 +1791,377 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_view &lhs, const pa
     return !(lhs == rhs);
 }
 #endif
+
+template<uint32_t W>
+struct wpacked_traits {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        constexpr size_t BLOCK_WIDTH = sizeof(uint64_t) * CHAR_BIT;
+        constexpr uint64_t BLOCK_MASK = W == 64 ? ~static_cast<uint64_t>(0) : ((static_cast<uint64_t>(1) << W) - 1);
+
+        const size_t bit_index = index * W;
+        const size_t block_index = bit_index / BLOCK_WIDTH, 
+                        block_offset = bit_index % BLOCK_WIDTH;
+
+#if _YAEF_INTRINSICS_HAVE_AVX2 && defined(__SIZEOF_INT128__) && __SIZEOF_INT128__ == 16
+        __uint128_t combined;
+        memcpy(&combined, blocks + block_index, sizeof(combined));
+        uint64_t result = static_cast<uint64_t>(combined >> block_offset);
+        return result & BLOCK_MASK;
+#elif _YAEF_INTRINSICS_HAVE_AVX2
+        __m128i words = _mm_loadu_si128(reinterpret_cast<const __m128i *>(blocks_ + block_index));
+        __m128i shifted = _mm_srli_epi64(words, block_offset);
+        __m128i carry = _mm_bsrli_si128(_mm_slli_epi64(words, BLOCK_WIDTH - block_offset), 8);
+        words = _mm_or_si128(shifted, carry);
+        return _mm_cvtsi128_si64(words) & BLOCK_MASK;
+#else
+        if (block_offset + W > BLOCK_WIDTH) {
+            const uint32_t num_low_bits = BLOCK_WIDTH - block_offset;
+            block_type low = extract_last_bits(blocks_[block_index], num_low_bits);
+            block_type high = extract_first_bits(blocks_[block_index + 1], W - num_low_bits);
+            return (high << num_low_bits) | low;
+        } else {
+            return extract_bits(blocks_[block_index], block_offset, block_offset + W);
+        }
+#endif
+    }
+};
+
+template<>
+struct wpacked_traits<2> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        size_t byte_idx = index / 4;
+        uint8_t b = reinterpret_cast<const uint8_t *>(blocks)[byte_idx];
+        return (b >> (static_cast<uint32_t>(index % 4) * 2)) & 0x3;
+    }
+};
+
+template<>
+struct wpacked_traits<4> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        size_t byte_idx = index / 2;
+        uint8_t b = reinterpret_cast<const uint8_t *>(blocks)[byte_idx];
+        return (b >> (static_cast<uint32_t>(index % 2) * 4)) & 0xF;
+    }
+};
+
+template<>
+struct wpacked_traits<8> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        return reinterpret_cast<const uint8_t *>(blocks)[index];
+    }
+};
+
+template<>
+struct wpacked_traits<16> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        return reinterpret_cast<const uint16_t *>(blocks)[index];
+    }
+};
+
+template<>
+struct wpacked_traits<24> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        constexpr uint32_t NUM_BYTES = 24 / CHAR_BIT;
+        uint64_t val = 0;
+        memcpy(&val, reinterpret_cast<const uint8_t *>(blocks) + NUM_BYTES * index, NUM_BYTES);
+        return val;
+    }
+};
+
+template<>
+struct wpacked_traits<32> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        return reinterpret_cast<const uint32_t *>(blocks)[index];
+    }
+};
+
+template<>
+struct wpacked_traits<40> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        constexpr uint32_t NUM_BYTES = 40 / CHAR_BIT;
+        uint64_t val = 0;
+        memcpy(&val, reinterpret_cast<const uint8_t *>(blocks) + NUM_BYTES * index, NUM_BYTES);
+        return val;
+    }
+};
+
+template<>
+struct wpacked_traits<48> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        constexpr uint32_t NUM_BYTES = 48 / CHAR_BIT;
+        uint64_t val = 0;
+        memcpy(&val, reinterpret_cast<const uint8_t *>(blocks) + NUM_BYTES * index, NUM_BYTES);
+        return val;
+    }
+};
+
+template<>
+struct wpacked_traits<56> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        constexpr uint32_t NUM_BYTES = 56 / CHAR_BIT;
+        uint64_t val = 0;
+        memcpy(&val, reinterpret_cast<const uint8_t *>(blocks) + NUM_BYTES * index, NUM_BYTES);
+        return val;
+    }
+};
+
+template<>
+struct wpacked_traits<64> {
+    _YAEF_ATTR_NODISCARD static uint64_t read(const uint64_t *blocks, size_t index) {
+        return blocks[index];
+    }
+};
+
+template<uint32_t W>
+struct wpacked_int_view_iterator_helper {
+    using const_iterator = readonly_random_access_proxy_iterator<wpacked_int_view<W>>;
+
+    _YAEF_ATTR_NODISCARD static const_iterator new_iterator(const wpacked_int_view<W> &base, size_t index) {
+        return const_iterator(base, index);
+    }
+};
+
+template<uint32_t W>
+class wpacked_int_view {
+public:
+    using value_type     = uint64_t;
+    using block_type     = uint64_t;
+    using size_type      = size_t;
+    using const_iterator = typename wpacked_int_view_iterator_helper<W>::const_iterator;
+
+    static constexpr uint32_t BLOCK_WIDTH = sizeof(block_type) * CHAR_BIT;
+    static constexpr uint32_t WIDTH = W;
+
+public:
+    wpacked_int_view() noexcept
+        : blocks_(nullptr), num_elems_(0) { }
+
+    wpacked_int_view(const wpacked_int_view &other)
+        : blocks_(other.blocks_), num_elems_(other.num_elems_) { }
+
+    wpacked_int_view(block_type *blocks, size_type num_elems) noexcept
+        : blocks_(blocks), num_elems_(num_elems) { }
+
+    wpacked_int_view &operator=(const wpacked_int_view &) = default;
+
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return num_elems_; }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+    _YAEF_ATTR_NODISCARD uint32_t width() const noexcept { return WIDTH; }
+    _YAEF_ATTR_NODISCARD const block_type *blocks() const noexcept { return blocks_; }
+    _YAEF_ATTR_NODISCARD block_type *blocks() noexcept { return blocks_; }
+
+    _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { 
+        return bits64::idiv_ceil(num_elems_ * WIDTH, BLOCK_WIDTH); 
+    }
+
+    _YAEF_ATTR_NODISCARD const_iterator begin() const { return cbegin(); }
+    _YAEF_ATTR_NODISCARD const_iterator cbegin() const {
+        return wpacked_int_view_iterator_helper<W>::new_iterator(*this, 0);
+    }
+    _YAEF_ATTR_NODISCARD const_iterator end() const { return cend(); }
+    _YAEF_ATTR_NODISCARD const_iterator cend() const {
+        return wpacked_int_view_iterator_helper<W>::new_iterator(*this, size());
+    }
+
+    _YAEF_ATTR_NODISCARD value_type limit_min() const { return 0; }
+    
+    _YAEF_ATTR_NODISCARD value_type limit_max() const {
+        if (_YAEF_UNLIKELY(WIDTH == sizeof(value_type) * CHAR_BIT)) { 
+            return std::numeric_limits<value_type>::max(); 
+        }
+        return (static_cast<value_type>(1) << WIDTH) - 1;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
+        return sizeof(block_type) * num_blocks();
+    }
+
+    void fill(value_type value) {
+        if (_YAEF_UNLIKELY(value == limit_min())) {
+            clear_all_bits();
+            return;
+        }
+        if (_YAEF_UNLIKELY(value == limit_max())) {
+            set_all_bits();
+            return;
+        }
+        for (size_type i = 0; i < size(); ++i) {
+            set_value(i, value);
+        }
+    }
+
+    void prefetch_for_read(size_type first, size_type last) const noexcept {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first * WIDTH / BLOCK_WIDTH;
+        const size_type last_block_index = last * WIDTH / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_read(blocks() + first_block_index + i);
+        }
+    }
+
+    void prefetch_for_write(size_type first, size_type last) noexcept {
+        _YAEF_ASSERT(first <= last);
+        _YAEF_ASSERT(last <= size());
+
+        const size_type first_block_index = first * WIDTH / BLOCK_WIDTH;
+        const size_type last_block_index = last * WIDTH / BLOCK_WIDTH;
+        const size_type num_blocks = last_block_index - first_block_index + 1;
+        constexpr size_type STEP = 64 / sizeof(block_type);
+        for (size_type i = 0; i < num_blocks; i += STEP) {
+            prefetch_write(blocks() + first_block_index + i);
+        }
+    }
+
+    _YAEF_ATTR_NODISCARD bit_view to_bit_view() noexcept;
+
+    _YAEF_ATTR_NODISCARD packed_int_view to_packed_int_view() noexcept {
+        return packed_int_view(WIDTH, blocks_, num_elems_);
+    }
+
+    _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept {
+        _YAEF_ASSERT(index < size());
+        return wpacked_traits<WIDTH>::read(blocks_, index);
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {
+        return get_value(index);
+    }
+
+    void set_value(size_type index, value_type value) noexcept {
+        _YAEF_ASSERT(index < size());
+        const size_type bit_index = index * WIDTH;
+        const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
+
+        block_type val = value;
+        if (block_offset + WIDTH > BLOCK_WIDTH) {
+            const uint32_t num_low_bits = BLOCK_WIDTH - block_offset;
+            block_type &block0 = blocks_[block_index], &block1 = blocks_[block_index + 1];
+            block0 = set_last_bits(block0, val, num_low_bits);
+            block1 = set_first_bits(block1, val >> num_low_bits, WIDTH - num_low_bits);
+        } else {
+            block_type &block = blocks_[block_index];
+            block = set_bits(block, block_offset, val, WIDTH);
+        }
+    }
+
+    _YAEF_ATTR_NODISCARD bool get_bit(size_type index) const noexcept {
+        _YAEF_ASSERT(index < size() * WIDTH);
+        auto info = locate_block(index);
+        return bits64::get_bit(*info.first, info.second);
+    }
+
+    void set_bit(size_type index, bool value) noexcept {
+        _YAEF_ASSERT(index < size() * WIDTH);
+        auto info = locate_block(index);
+        *info.first = bits64::set_bit(*info.first, info.second, value);
+    }
+
+    void set_bit(size_type index) noexcept {
+        _YAEF_ASSERT(index < size() * WIDTH);
+        auto info = locate_block(index);
+        *info.first = bits64::set_bit(*info.first, info.second);
+    }
+
+    void clear_bit(size_type index) noexcept {
+        _YAEF_ASSERT(index < size() * WIDTH);
+        auto info = locate_block(index);
+        *info.first = bits64::clear_bit(*info.first, info.second);
+    }
+
+    void clear_all_bits() {
+        std::fill_n(blocks_, num_blocks(), 0);
+    }
+
+    void set_all_bits() {
+        if (_YAEF_UNLIKELY(num_blocks() == 0)) {
+            return;
+        }
+        std::fill_n(blocks_, num_blocks() - 1, std::numeric_limits<block_type>::max());
+        blocks_[num_blocks() - 1] = make_mask_lsb1(size() * WIDTH - (num_blocks() - 1) * BLOCK_WIDTH);
+    }
+
+    void swap(wpacked_int_view &other) noexcept {
+        std::swap(blocks_, other.blocks_);
+        std::swap(num_elems_, other.num_elems_);
+    }
+
+    error_code serialize(serializer &ser) const;
+
+    template<typename AllocT>
+    error_code deserialize(AllocT &alloc, deserializer &deser);
+
+private:
+    block_type *blocks_;
+    size_type   num_elems_;
+
+    _YAEF_ATTR_NODISCARD std::pair<const block_type *, uint32_t> locate_block(size_type bit_index) const noexcept {
+        const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
+        return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
+    }
+
+    _YAEF_ATTR_NODISCARD std::pair<block_type *, uint32_t> locate_block(size_type bit_index) noexcept {
+        const size_type block_index = bit_index / BLOCK_WIDTH, block_offset = bit_index % BLOCK_WIDTH;
+        return std::make_pair(blocks_ + block_index, static_cast<uint32_t>(block_offset));
+    }
+};
+
+template<uint32_t W>
+_YAEF_ATTR_NODISCARD inline bool operator==(const wpacked_int_view<W> &lhs, const wpacked_int_view<W> &rhs) noexcept {
+    if (_YAEF_UNLIKELY(std::addressof(lhs) == std::addressof(rhs))) {
+        return true;
+    }
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    return std::equal(lhs.blocks(), lhs.blocks() + lhs.num_blocks(), rhs.blocks());
+}
+
+#if __cplusplus < 202002L
+template<uint32_t W>
+_YAEF_ATTR_NODISCARD inline bool operator!=(const wpacked_int_view<W> &lhs, const wpacked_int_view<W> &rhs) noexcept {
+    return !(lhs == rhs);
+}
+#endif
+
+template<>
+struct wpacked_int_view_iterator_helper<8> {
+    using const_iterator = const uint8_t *;
+
+    _YAEF_ATTR_NODISCARD static const_iterator new_iterator(const wpacked_int_view<8> &base, size_t index) {
+        return reinterpret_cast<const uint8_t *>(base.blocks()) + index;
+    }
+};
+
+template<>
+struct wpacked_int_view_iterator_helper<16> {
+    using const_iterator = const uint16_t *;
+
+    _YAEF_ATTR_NODISCARD static const_iterator new_iterator(const wpacked_int_view<16> &base, size_t index) {
+        return reinterpret_cast<const uint16_t *>(base.blocks()) + index;
+    }
+};
+
+template<>
+struct wpacked_int_view_iterator_helper<32> {
+    using const_iterator = const uint32_t *;
+
+    _YAEF_ATTR_NODISCARD static const_iterator new_iterator(const wpacked_int_view<32> &base, size_t index) {
+        return reinterpret_cast<const uint32_t *>(base.blocks()) + index;
+    }
+};
+
+template<>
+struct wpacked_int_view_iterator_helper<64> {
+    using const_iterator = const uint64_t *;
+
+    _YAEF_ATTR_NODISCARD static const_iterator new_iterator(const wpacked_int_view<64> &base, size_t index) {
+        return base.blocks() + index;
+    }
+};
 
 class bits_reader {
 public:
@@ -2316,12 +2831,14 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const aligned_allocator<T1, A1> &lhs
 template<typename AllocT>
 _YAEF_ATTR_NODISCARD inline bits64::packed_int_view
 allocate_uninit_packed_ints(AllocT &alloc, uint32_t width, size_t num_elems) {
-    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename std::allocator_traits<AllocT>::value_type, uint8_t>::value);
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
     using bits_block_type = bits64::packed_int_view::block_type;
     constexpr uint32_t BITS_BLOCK_WIDTH = bits64::packed_int_view::BLOCK_WIDTH;
     const size_t size_in_bytes = bits64::idiv_ceil(width * num_elems, BITS_BLOCK_WIDTH) *
                                                    sizeof(bits_block_type);
-    uint8_t *mem = std::allocator_traits<AllocT>::allocate(alloc, size_in_bytes);
+    uint8_t *mem = std::allocator_traits<byte_alloc>::allocate(balloc, size_in_bytes);
     auto *blocks = reinterpret_cast<bits_block_type *>(mem);
     return bits64::packed_int_view{width, blocks, num_elems};
 }
@@ -2334,9 +2851,34 @@ allocate_packed_ints(AllocT &alloc, uint32_t width, size_t num_elems) {
     return result;
 }
 
+template<uint32_t W, typename AllocT>
+_YAEF_ATTR_NODISCARD inline bits64::wpacked_int_view<W>
+allocate_uninit_wpacked_ints(AllocT &alloc, size_t num_elems) {
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
+    using bits_block_type = typename bits64::wpacked_int_view<W>::block_type;
+    constexpr uint32_t BITS_BLOCK_WIDTH = bits64::wpacked_int_view<W>::BLOCK_WIDTH;
+    const size_t size_in_bytes = bits64::idiv_ceil(W * num_elems, BITS_BLOCK_WIDTH) *
+                                                   sizeof(bits_block_type);
+    uint8_t *mem = std::allocator_traits<byte_alloc>::allocate(balloc, size_in_bytes);
+    auto *blocks = reinterpret_cast<bits_block_type *>(mem);
+    return bits64::wpacked_int_view<W>{blocks, num_elems};
+}
+
+template<uint32_t W, typename AllocT>
+_YAEF_ATTR_NODISCARD inline bits64::wpacked_int_view<W>
+allocate_wpacked_ints(AllocT &alloc, size_t num_elems) {
+    auto result = allocate_uninit_wpacked_ints<W>(alloc, num_elems);
+    std::uninitialized_fill_n(result.blocks(), result.num_blocks(), 0);
+    return result;
+}
+
 template<typename AllocT>
 inline void deallocate_packed_ints(AllocT &alloc, bits64::packed_int_view &ints) {
-    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename std::allocator_traits<AllocT>::value_type, uint8_t>::value);
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
     using bits_block_type = bits64::packed_int_view::block_type;
     constexpr uint32_t BITS_BLOCK_WIDTH = bits64::packed_int_view::BLOCK_WIDTH;
     const size_t size_in_bytes = bits64::idiv_ceil(ints.width() * ints.size(), BITS_BLOCK_WIDTH) *
@@ -2345,7 +2887,7 @@ inline void deallocate_packed_ints(AllocT &alloc, bits64::packed_int_view &ints)
         return;
     }
     uint8_t *mem = reinterpret_cast<uint8_t *>(ints.blocks());
-    std::allocator_traits<AllocT>::deallocate(alloc, mem, size_in_bytes);
+    std::allocator_traits<byte_alloc>::deallocate(balloc, mem, size_in_bytes);
 }
 
 template<typename AllocT>
@@ -2356,15 +2898,41 @@ duplicate_packed_ints(AllocT &alloc, const bits64::packed_int_view &ints) {
     return result;
 }
 
+template<uint32_t W, typename AllocT>
+inline void deallocate_wpacked_ints(AllocT &alloc, bits64::wpacked_int_view<W> &ints) {
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
+    using bits_block_type = typename bits64::wpacked_int_view<W>::block_type;
+    constexpr uint32_t BITS_BLOCK_WIDTH = bits64::wpacked_int_view<W>::BLOCK_WIDTH;
+    const size_t size_in_bytes = bits64::idiv_ceil(W * ints.size(), BITS_BLOCK_WIDTH) *
+                                                   sizeof(bits_block_type);
+    if (_YAEF_UNLIKELY(ints.blocks() == nullptr || size_in_bytes == 0)) {
+        return;
+    }
+    uint8_t *mem = reinterpret_cast<uint8_t *>(ints.blocks());
+    std::allocator_traits<byte_alloc>::deallocate(balloc, mem, size_in_bytes);
+}
+
+template<uint32_t W, typename AllocT>
+_YAEF_ATTR_NODISCARD inline bits64::wpacked_int_view<W> 
+duplicate_wpacked_ints(AllocT &alloc, const bits64::wpacked_int_view<W> &ints) {
+    auto result = allocate_uninit_wpacked_ints<W>(alloc, ints.size());
+    std::uninitialized_copy_n(ints.blocks(), ints.num_blocks(), result.blocks());
+    return result;
+}
+
 template<typename AllocT>
 _YAEF_ATTR_NODISCARD inline bits64::bit_view 
 allocate_uninit_bits(AllocT &alloc, size_t num_elems) {
-    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename std::allocator_traits<AllocT>::value_type, uint8_t>::value);
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
     using bits_block_type = bits64::bit_view::block_type;
     constexpr uint32_t BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
     const size_t size_in_bytes = bits64::idiv_ceil(num_elems, BITS_BLOCK_WIDTH) *
                                                    sizeof(bits_block_type);
-    uint8_t *mem = std::allocator_traits<AllocT>::allocate(alloc, size_in_bytes);
+    uint8_t *mem = std::allocator_traits<byte_alloc>::allocate(balloc, size_in_bytes);
     auto *blocks = reinterpret_cast<bits_block_type *>(mem);
     return bits64::bit_view{blocks, num_elems};
 }
@@ -2383,7 +2951,9 @@ allocate_bits(AllocT &alloc, size_t num_elems, bool init_value = false) {
 
 template<typename AllocT>
 inline void deallocate_bits(AllocT &alloc, bits64::bit_view bits) {
-    _YAEF_STATIC_ASSERT_NOMSG(std::is_same<typename std::allocator_traits<AllocT>::value_type, uint8_t>::value);
+    using byte_alloc = typename std::allocator_traits<AllocT>::template rebind_alloc<uint8_t>;
+    byte_alloc balloc(alloc);
+
     using bits_block_type = bits64::bit_view::block_type;
     constexpr uint32_t BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
     const size_t size_in_bytes = bits64::idiv_ceil(bits.size(), BITS_BLOCK_WIDTH) *
@@ -2392,12 +2962,12 @@ inline void deallocate_bits(AllocT &alloc, bits64::bit_view bits) {
         return;
     }
     uint8_t *mem = reinterpret_cast<uint8_t *>(bits.blocks());
-    std::allocator_traits<AllocT>::deallocate(alloc, mem, size_in_bytes);
+    std::allocator_traits<byte_alloc>::deallocate(balloc, mem, size_in_bytes);
 }
 
 template<typename AllocT>
 _YAEF_ATTR_NODISCARD inline bits64::bit_view duplicate_bits(AllocT &alloc, const bits64::bit_view &ints) {
-    auto result = allocate_bits(alloc, ints.size());
+    auto result = allocate_uninit_bits(alloc, ints.size());
     std::uninitialized_copy_n(ints.blocks(), ints.num_blocks(), result.blocks());
     return result;
 }
@@ -2424,6 +2994,30 @@ inline error_code packed_int_view::deserialize(AllocT &alloc, deserializer &dese
     auto tmp = yaef::details::allocate_uninit_packed_ints(alloc, width, num_elems);
     if (!deser.read_bytes(reinterpret_cast<uint8_t *>(tmp.blocks_), sizeof(block_type) * tmp.num_blocks())) {
         yaef::details::deallocate_packed_ints(alloc, tmp);
+        return error_code::deserialize_io;
+    }
+    *this = std::move(tmp);
+    return error_code::success;
+}
+
+template<uint32_t W>
+inline error_code wpacked_int_view<W>::serialize(serializer &ser) const {
+    if (!ser.write(num_elems_)) { return error_code::serialize_io; }
+    if (!ser.write_bytes(reinterpret_cast<uint8_t *>(blocks_), num_blocks() * sizeof(blocks_))) {
+        return error_code::serialize_io;
+    }
+    return error_code::success;
+}
+
+template<uint32_t W>
+    template<typename AllocT>
+inline error_code wpacked_int_view<W>::deserialize(AllocT &alloc, deserializer &deser) {
+    size_t num_elems;
+    if (!deser.read(num_elems)) { return error_code::deserialize_io; }
+
+    auto tmp = yaef::details::allocate_uninit_wpacked_ints<W>(alloc, num_elems);
+    if (!deser.read_bytes(reinterpret_cast<uint8_t *>(tmp.blocks_), sizeof(block_type) * tmp.num_blocks())) {
+        yaef::details::deallocate_wpacked_ints(alloc, tmp);
         return error_code::deserialize_io;
     }
     *this = std::move(tmp);
@@ -3291,6 +3885,14 @@ struct from_sorted_t { };
 static constexpr from_sorted_t from_sorted{};
 #else
 inline constexpr from_sorted_t from_sorted{};
+#endif
+
+struct truncated_pack_t { };
+
+#if __cplusplus < 201703L
+static constexpr truncated_pack_t truncated_pack{};
+#else
+inline constexpr truncated_pack_t truncated_pack{};
 #endif
 
 #if _YAEF_USE_CXX_CONCEPTS
@@ -4474,13 +5076,13 @@ public:
     }
 
 #if _YAEF_USE_STL_SPAN
-    eliasfano_sparse_bitmap(size_t num_bits, std::span<const size_t> indices,
+    eliasfano_sparse_bitmap(size_t num_bits, std::span<const size_type> indices,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type>{indices.data(), indices.data() + indices.size(), alloc};
     }
 
-    eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, std::span<const size_t> indices,
+    eliasfano_sparse_bitmap(from_sorted_t, size_t num_bits, std::span<const size_type> indices,
                             const allocator_type &alloc = allocator_type{})
         : num_bits_(num_bits) {
         pos_list_ = eliasfano_list<size_type>{from_sorted, indices.data(), indices.data() + indices.size(), alloc};
@@ -5084,6 +5686,239 @@ _YAEF_ATTR_NODISCARD inline bool operator!=(const packed_int_buffer<AllocT> &lhs
 }
 #endif
 
+template<uint32_t W, typename AllocT = details::aligned_allocator<uint8_t, 32>>
+class wpacked_int_buffer {
+public:
+    using view_type       = details::bits64::wpacked_int_view<W>;
+    using inner_type      = details::value_with_allocator_pair<view_type, AllocT>;
+
+    friend struct details::serialize_friend_access;
+public:
+    using size_type       = typename view_type::size_type;
+    using difference_type = ptrdiff_t;
+    using value_type      = uint64_t;
+    using block_type      = typename view_type::block_type;
+    using allocator_type  = AllocT;
+    static constexpr size_type BLOCK_WIDTH = view_type::BLOCK_WIDTH; 
+    static constexpr size_type WIDTH = W;
+
+public:
+    wpacked_int_buffer() = default;
+
+    wpacked_int_buffer(const wpacked_int_buffer &other) {
+        get_view() = details::duplicate_wpacked_ints(get_alloc(), other.get_view());
+    }
+
+    wpacked_int_buffer(wpacked_int_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+    }
+
+    wpacked_int_buffer(size_type size) {
+        get_view() = details::allocate_wpacked_ints<W>(get_alloc(), size);
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    wpacked_int_buffer(RandomAccessIterT first, SentIterT last) {
+        auto max_val = details::find_max_value(first, last);
+        uint32_t width = std::max<uint32_t>(1, details::bits64::bit_width(max_val));
+        if (_YAEF_UNLIKELY(width > WIDTH)) {
+            throw std::invalid_argument(
+                "wpacked_int_buffer::wpacked_int_buffer: the width of input data is too large");
+        }
+        size_type size = details::iter_distance(first, last);
+        get_view() = details::allocate_wpacked_ints<W>(get_alloc(), size);
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    wpacked_int_buffer(truncated_pack_t, RandomAccessIterT first, SentIterT last) {
+        size_type size = details::iter_distance(first, last);
+        get_view() = details::allocate_wpacked_ints<W>(get_alloc(), size);
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+    }
+
+    wpacked_int_buffer(std::initializer_list<value_type> initlist)
+        : wpacked_int_buffer(initlist.begin(), initlist.end()) { }
+
+    wpacked_int_buffer(truncated_pack_t, std::initializer_list<value_type> initlist)
+        : wpacked_int_buffer(truncated_pack, initlist.begin(), initlist.end()) { }
+
+    ~wpacked_int_buffer() {
+        details::deallocate_wpacked_ints(get_alloc(), get_view());
+    }
+
+    wpacked_int_buffer &operator=(const wpacked_int_buffer &other) {
+        get_view() = details::duplicate_wpacked_ints(get_alloc(), other.get_view());
+        return *this;
+    }
+
+    wpacked_int_buffer &operator=(wpacked_int_buffer &&other) noexcept {
+        get_view() = other.get_view();
+        other.get_view() = view_type{};
+        return *this;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept { return get_view().space_usage_in_bytes(); }
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return get_view().size(); }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size() == 0; }
+    _YAEF_ATTR_NODISCARD uint32_t width() const noexcept { return get_view().width(); }
+    _YAEF_ATTR_NODISCARD value_type limit_min() const { return get_view().limit_min(); }
+    _YAEF_ATTR_NODISCARD value_type limit_max() const { return get_view().limit_max(); }
+
+    _YAEF_ATTR_NODISCARD const block_type *block_data() const noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD block_type *block_data() noexcept { return get_view().blocks(); }
+    _YAEF_ATTR_NODISCARD size_type num_blocks() const noexcept { return get_view().num_blocks(); }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    wpacked_int_buffer &assign(RandomAccessIterT first, SentIterT last) {
+        auto max_val = details::find_max_value(first, last);
+        uint32_t width = std::max<uint32_t>(1, details::bits64::bit_width(max_val));
+        if (_YAEF_UNLIKELY(width > WIDTH)) {
+            throw std::invalid_argument(
+                "wpacked_int_buffer::assign: the width of input data is too large");
+        }
+
+        size_type size = details::iter_distance(first, last);
+        if (this->size() != size) {
+            details::deallocate_wpacked_ints(get_alloc(), get_view());
+            get_view() = details::allocate_wpacked_ints<W>(get_alloc(), size);
+        }
+
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+        return *this;
+    }
+
+    _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_unsigned)
+    wpacked_int_buffer &assign(truncated_pack_t, RandomAccessIterT first, SentIterT last) {
+        size_type size = details::iter_distance(first, last);
+        if (this->size() != size) {
+            details::deallocate_wpacked_ints(get_alloc(), get_view());
+            get_view() = details::allocate_wpacked_ints<W>(get_alloc(), size);
+        }
+        for (size_type i = 0; i < size; ++i) {
+            set_value(i, *first++);
+        }
+        return *this;
+    }
+
+    wpacked_int_buffer &assign(std::initializer_list<value_type> initlist) {
+        return assign(initlist.begin(), initlist.end());
+    }
+
+    wpacked_int_buffer &assign(truncated_pack_t, std::initializer_list<value_type> initlist) {
+        return assign(truncated_pack, initlist.begin(), initlist.end());
+    }
+
+    _YAEF_ATTR_NODISCARD value_type get_value(size_type index) const noexcept { 
+        return get_view().get_value(index); 
+    }
+
+    void set_value(size_type index, value_type value) noexcept { 
+        get_view().set_value(index, value); 
+    }
+
+    void prefetch_for_read(size_type first, size_type last) const {
+        get_view().prefetch_for_read(first, last);
+    }
+
+    void prefetch_for_write(size_type first, size_type last) {
+        get_view().prefetch_for_write(first, last);
+    }
+
+    _YAEF_ATTR_NODISCARD value_type operator[](size_type index) const noexcept {
+        return get_view().get_value(index);
+    }
+
+    void fill_min_values() {
+        get_view().clear_all_bits();
+    }
+    
+    void fill_max_values() {
+        get_view().set_all_bits();
+    }
+
+    void fill(value_type val) {
+        get_view().fill(val);
+    }
+
+    void reset() {
+        details::deallocate_wpacked_ints(get_alloc(), get_view());
+        get_view() = view_type{};
+    }
+
+    void resize(size_t new_size) {
+        if (_YAEF_UNLIKELY(new_size == size())) { return; }
+        if (_YAEF_UNLIKELY(new_size == 0)) { 
+            reset(); 
+            return;
+        }
+
+        auto new_vec = details::allocate_wpacked_ints<WIDTH>(get_alloc(), new_size);
+        for (size_t i = 0; i < size(); ++i) {
+            new_vec.set_value(i, get_value(i));
+        }
+        details::deallocate_wpacked_ints(get_alloc(), get_view());
+        get_view() = new_vec;
+    }
+
+    void swap(wpacked_int_buffer &other) noexcept {
+        get_view().swap(other.get_view());
+    }
+
+    template<uint32_t W1, typename AllocU, uint32_t W2, typename AllocV>
+    friend bool operator==(const wpacked_int_buffer<W1, AllocU> &lhs, const wpacked_int_buffer<W2> &rhs);
+
+#if __cplusplus < 202002L
+    template<uint32_t W1, typename AllocU, uint32_t W2, typename AllocV>
+    friend bool operator!=(const wpacked_int_buffer<W1, AllocU> &lhs, const wpacked_int_buffer<W2, AllocV> &rhs);
+#endif
+
+private:
+    inner_type inner_;
+
+    _YAEF_ATTR_NODISCARD const allocator_type &get_alloc() const { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD allocator_type &get_alloc() { return inner_.alloc(); }
+    _YAEF_ATTR_NODISCARD const view_type &get_view() const { return inner_.value(); }
+    _YAEF_ATTR_NODISCARD view_type &get_view() { return inner_.value(); }
+
+    error_code do_serialize(details::serializer &ser) const {
+        return get_view().serialize(ser);
+    }
+
+    error_code do_deserialize(details::deserializer &deser) {
+        return get_view().deserialize(get_alloc(), deser);        
+    }
+};
+
+template<uint32_t W1, typename AllocT, uint32_t W2, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator==(const wpacked_int_buffer<W1, AllocT> &lhs, 
+                                            const wpacked_int_buffer<W2, AllocU> &rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (lhs[i] != rhs[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+#if __cplusplus < 202002L
+template<uint32_t W1, typename AllocT, uint32_t W2, typename AllocU>
+_YAEF_ATTR_NODISCARD inline bool operator!=(const wpacked_int_buffer<W1, AllocT> &lhs, 
+                                            const wpacked_int_buffer<W2, AllocU> &rhs) {
+    return !(lhs == rhs);
+}
+#endif
+
 enum class sample_strategy {
     cardinality, universe
 };
@@ -5105,12 +5940,17 @@ template<typename T, sample_strategy Strategy = sample_strategy::cardinality,
 class sparse_sampled_list {
     friend struct details::serialize_friend_access;
 
-    using alloc_traits       = std::allocator_traits<AllocT>;
-    using byte_alloc         = typename alloc_traits::template rebind_alloc<uint8_t>;
-    using byte_alloc_traits  = std::allocator_traits<byte_alloc>;
-    using is_cardinality_tag = std::integral_constant<sample_strategy, sample_strategy::cardinality>;
-    using is_universe_tag    = std::integral_constant<sample_strategy, sample_strategy::universe>;
-    using strategy_tag       = std::integral_constant<sample_strategy, Strategy>;
+    using alloc_traits           = std::allocator_traits<AllocT>;
+    using byte_alloc             = typename alloc_traits::template rebind_alloc<uint8_t>;
+    using byte_alloc_traits      = std::allocator_traits<byte_alloc>;
+    using is_cardinality_tag     = std::integral_constant<sample_strategy, sample_strategy::cardinality>;
+    using is_universe_tag        = std::integral_constant<sample_strategy, sample_strategy::universe>;
+    using strategy_tag           = std::integral_constant<sample_strategy, Strategy>;
+    
+    static constexpr size_t DATA_WIDTH = 
+        Strategy == sample_strategy::cardinality || Strategy == sample_strategy::universe  
+            ? sizeof(T) * CHAR_BIT
+            : details::bits64::constexpr_bit_width<SampleRate>::value;
 public:
     using value_type      = T;
     using size_type       = size_t;
@@ -5118,7 +5958,7 @@ public:
     using pointer         = T *;
     using const_reference = const T &;
     using reference       = T &;
-    using const_iterator  = const T *;
+    using const_iterator  = typename details::bits64::wpacked_int_view<DATA_WIDTH>::const_iterator;
     using iterator        = const_iterator;
     using allocator_type  = AllocT;
 
@@ -5128,21 +5968,19 @@ public:
 public:
     sparse_sampled_list()
         : num_samples_and_alloc_(0, allocator_type{}),
-          samples_(nullptr), size_(0), data_(nullptr) { }
+          samples_(nullptr) { }
 
     sparse_sampled_list(const sparse_sampled_list &other)
         : num_samples_and_alloc_(other.get_num_samples(), other.get_alloc()),
-          samples_(nullptr), size_(other.size_), data_(nullptr) {
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(other.data_, size_, data_);
+          samples_(nullptr) {
+        data_ = details::duplicate_wpacked_ints(get_alloc(), other.data_);
         copy_samples_from(other, strategy_tag{});
     }
 
     sparse_sampled_list(sparse_sampled_list &&other) noexcept
         : num_samples_and_alloc_(details::exchange(other.get_num_samples(), 0), allocator_type{}),
           samples_(details::exchange(other.samples_, nullptr)),
-          size_(details::exchange(other.size_, 0)),
-          data_(details::exchange(other.data_, nullptr)) {
+          data_(details::exchange(other.data_, details::bits64::wpacked_int_view<DATA_WIDTH>{})) {
         details::checked_swap_alloc(get_alloc(), other.get_alloc());
     }
 
@@ -5153,18 +5991,14 @@ public:
                 "sparse_sampled_list::sparse_sampled_list: the input data is not sorted"));
         }
 
-        size_ = details::iter_distance(first, last);
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(first, size_, data_);
-        build_samples(strategy_tag{});
+        build_samples(strategy_tag{}, first, last);
+        build_data(strategy_tag{}, first, last);
     }
 
     _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
     sparse_sampled_list(from_sorted_t, ForwardIter first, SentIterT last) {
-        size_ = details::iter_distance(first, last);
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(first, size_, data_);
-        build_samples(strategy_tag{});
+        build_samples(strategy_tag{}, first, last);
+        build_data(strategy_tag{}, first, last);
     }
 
     sparse_sampled_list(std::initializer_list<value_type> initlist)
@@ -5186,19 +6020,17 @@ public:
     sparse_sampled_list &operator=(sparse_sampled_list &&other) noexcept {
         samples_ = details::exchange(other.samples_, nullptr);
         get_num_samples() = details::exchange(other.get_num_samples(), 0);
-        data_ = details::exchange(other.data_, nullptr);
-        size_ = details::exchange(other.size_, 0);
+        data_ = details::exchange(other.data_, details::bits64::wpacked_int_view<DATA_WIDTH>{});
         return *this;
     }
 
-    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return size_; }
-    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return size_ == 0; }
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return data_.size(); }
+    _YAEF_ATTR_NODISCARD bool empty() const noexcept { return data_.size() == 0; }
     _YAEF_ATTR_NODISCARD size_type num_samples() const noexcept { return get_num_samples(); }
-    _YAEF_ATTR_NODISCARD const_pointer data() const noexcept { return data_; }
     _YAEF_ATTR_NODISCARD allocator_type get_allocator() const { return allocator_type(get_alloc()); }
 
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const {
-        const size_type data_usage = sizeof(value_type) * size_;
+        const size_type data_usage = data_.space_usage_in_bytes();
         const size_type sample_usage = SAMPLE_STRATEGY == sample_strategy::cardinality
             ? sizeof(value_type) * get_num_samples() : sizeof(size_type) * get_num_samples();
         return data_usage + sample_usage;
@@ -5218,26 +6050,28 @@ public:
             const uint64_t u = static_cast<uint64_t>(maxval) - static_cast<uint64_t>(minval);
             num_sample_bits = (details::bits64::idiv_ceil(u, SAMPLE_RATE) + 1) * sizeof(size_type) * CHAR_BIT;
         }
-        
-        return num_sample_bits + num_elems * sizeof(value_type) * CHAR_BIT;
+
+        size_type num_data_bits = num_elems * sizeof(value_type) * CHAR_BIT;
+
+        return num_sample_bits + num_data_bits;
     }
 
     _YAEF_ATTR_NODISCARD value_type min() const _YAEF_MAYBE_NOEXCEPT {
-        if (_YAEF_UNLIKELY(size_ == 0)) {
+        if (_YAEF_UNLIKELY(size() == 0)) {
             _YAEF_THROW(std::out_of_range("sparse_sampled_list::max: the list is empty"));
         }
         return data_[0];
     }
 
     _YAEF_ATTR_NODISCARD value_type max() const _YAEF_MAYBE_NOEXCEPT {
-        if (_YAEF_UNLIKELY(size_ == 0)) {
+        if (_YAEF_UNLIKELY(size() == 0)) {
             _YAEF_THROW(std::out_of_range("sparse_sampled_list::max: the list is empty"));
         }
-        return data_[size_ - 1];
+        return data_[size() - 1];
     }
 
     _YAEF_ATTR_NODISCARD value_type at(size_type index) const _YAEF_MAYBE_NOEXCEPT {
-        if (_YAEF_UNLIKELY(index >= size_)) {
+        if (_YAEF_UNLIKELY(index >= size())) {
             _YAEF_THROW(std::out_of_range("sparse_sampled_list::at: the index is out of range"));
         }
         return data_[index];
@@ -5248,21 +6082,21 @@ public:
     }
 
     _YAEF_ATTR_NODISCARD const_iterator begin() const { return cbegin(); }
+    _YAEF_ATTR_NODISCARD const_iterator cbegin() const { return data_.cbegin(); }
     _YAEF_ATTR_NODISCARD const_iterator end() const { return cend(); }
-    _YAEF_ATTR_NODISCARD const_iterator cbegin() const { return data_; }
-    _YAEF_ATTR_NODISCARD const_iterator cend() const { return size_ == 0 ? data_ : data_ + size_; }
+    _YAEF_ATTR_NODISCARD const_iterator cend() const { return data_.cend(); }
 
     _YAEF_ATTR_NODISCARD const_iterator lower_bound(value_type target) const {
-        return data_ + index_of_lower_bound(target);
+        return begin() + index_of_lower_bound(target);
     }
 
     _YAEF_ATTR_NODISCARD const_iterator upper_bound(value_type target) const {
-        return data_ + index_of_upper_bound(target);
+        return begin() + index_of_upper_bound(target);
     }
 
     _YAEF_ATTR_NODISCARD size_type index_of_lower_bound(value_type target) const {
         if (_YAEF_UNLIKELY(target > max())) {
-            return size_;
+            return size();
         }
         if (_YAEF_UNLIKELY(target <= min())) {
             return 0;
@@ -5273,7 +6107,7 @@ public:
 
     _YAEF_ATTR_NODISCARD size_type index_of_upper_bound(value_type target) const {
         if (_YAEF_UNLIKELY(target >= max())) {
-            return size_;
+            return size();
         }
         if (_YAEF_UNLIKELY(target < min())) {
             return 0;
@@ -5290,20 +6124,16 @@ public:
         }
 
         do_deallocate();
-        size_ = details::iter_distance(first, last);
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(first, size_, data_);
-        build_samples(strategy_tag{});
+        build_samples(strategy_tag{}, first, last);
+        build_data(strategy_tag{}, first, last);
         return *this;
     }
 
     _YAEF_REQUIRES_FORWARD_ITER(ForwardIter, SentIterT, std::is_integral)
     sparse_sampled_list &assign(from_sorted_t, ForwardIter first, SentIterT last) {
         do_deallocate();
-        size_ = details::iter_distance(first, last);
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(first, size_, data_);
-        build_samples(strategy_tag{});
+        build_samples(strategy_tag{}, first, last);
+        build_data(strategy_tag{}, first, last);
         return *this;
     }
 
@@ -5319,17 +6149,15 @@ public:
         std::swap(get_num_samples(), other.get_num_samples());
         details::checked_swap_alloc(get_alloc(), get_alloc());
         std::swap(samples_, other.samples_);
-        std::swap(data_, other.data_);
-        std::swap(size_, other.size_);
+        data_.swap(other.data_);
     }
 
 private:
     using num_samples_and_alloc = details::value_with_allocator_pair<size_type, allocator_type>;
 
-    num_samples_and_alloc  num_samples_and_alloc_;
-    uint8_t               *samples_;
-    size_type              size_;
-    pointer                data_;
+    num_samples_and_alloc                          num_samples_and_alloc_;
+    uint8_t                                       *samples_;
+    details::bits64::wpacked_int_view<DATA_WIDTH>  data_;
 
     _YAEF_ATTR_NODISCARD const size_type &get_num_samples() const noexcept { return num_samples_and_alloc_.value(); }
     _YAEF_ATTR_NODISCARD size_type &get_num_samples() { return num_samples_and_alloc_.value(); }
@@ -5340,14 +6168,17 @@ private:
         if (!ser.write(get_num_samples())) { return error_code::serialize_io; }
         
         if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::cardinality) {
-            if (!ser.write_bytes(samples_, sizeof(value_type) * get_num_samples())) { return error_code::serialize_io; }
+            if (!ser.write_bytes(samples_, sizeof(value_type) * get_num_samples())) { 
+                return error_code::serialize_io; 
+            }
         } else if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::universe) {
-            if (!ser.write_bytes(samples_, sizeof(size_type) * get_num_samples())) { return error_code::serialize_io; }
+            if (!ser.write_bytes(samples_, sizeof(size_type) * get_num_samples())) { 
+                return error_code::serialize_io; 
+            }
         }
-
-        if (!ser.write(size_)) { return error_code::serialize_io; }
-        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(data_), sizeof(value_type) * size_)) {
-            return error_code::serialize_io;
+        error_code ec = details::serialize_friend_access::serialize(data_, ser);
+        if (ec != error_code::success) {
+            return ec;
         }
         return error_code::success;
     }
@@ -5358,16 +6189,19 @@ private:
         byte_alloc balloc(get_alloc());
         if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::cardinality) {
             samples_ = byte_alloc_traits::allocate(balloc, sizeof(value_type) * get_num_samples());
-            if (!deser.read_bytes(samples_, sizeof(value_type) * get_num_samples())) { return error_code::serialize_io; }
+            if (!deser.read_bytes(samples_, sizeof(value_type) * get_num_samples())) { 
+                return error_code::serialize_io; 
+            }
         } else if _YAEF_CXX17_CONSTEXPR (SAMPLE_STRATEGY == sample_strategy::universe) {
             samples_ = byte_alloc_traits::allocate(balloc, sizeof(size_type) * get_num_samples());
-            if (!deser.read_bytes(samples_, sizeof(size_type) * get_num_samples())) { return error_code::serialize_io; }
+            if (!deser.read_bytes(samples_, sizeof(size_type) * get_num_samples())) { 
+                return error_code::serialize_io; 
+            }
         }
 
-        if (!deser.read(size_)) { return error_code::serialize_io; }
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(data_), sizeof(value_type) * size_)) {
-            return error_code::serialize_io;
+        error_code ec = details::serialize_friend_access::deserialize(data_, deser);
+        if (ec != error_code::success) {
+            return ec;
         }
         return error_code::success;
     }
@@ -5383,11 +6217,7 @@ private:
             samples_ = nullptr;
             get_num_samples() = 0;
         }
-        if (data_) {
-            alloc_traits::deallocate(get_alloc(), data_, size_);
-            data_ = nullptr;
-            size_ = 0;
-        }
+        details::deallocate_wpacked_ints(get_alloc(), data_);
     }
 
     void copy_samples_from(const sparse_sampled_list &other, is_cardinality_tag) {
@@ -5404,16 +6234,13 @@ private:
 
     void copy_from(const sparse_sampled_list &other) {
         get_num_samples() = other.get_num_samples();
-        size_ = other.size_;
         get_alloc() = other.get_alloc();
 
-        data_ = alloc_traits::allocate(get_alloc(), size_);
-        std::uninitialized_copy_n(other.data_, size_, data_);
-
+        data_ = details::duplicate_wpacked_ints(get_alloc(), other.data_);
         copy_samples_from(other, strategy_tag{});
     }
 
-    void build_eytzinger(value_type *out, size_type &reader_idx, size_type writer_idx) {
+    /*void build_eytzinger(value_type *out, size_type &reader_idx, size_type writer_idx) {
         if (writer_idx >= get_num_samples()) {
             return;
         }
@@ -5427,21 +6254,27 @@ private:
         if (right_child < get_num_samples()) {
             build_eytzinger(out, reader_idx, right_child);
         }
-    }
+    }*/
 
-    void build_samples(is_cardinality_tag) {
-        get_num_samples() = details::bits64::idiv_ceil(size_, SAMPLE_RATE);
+    template<typename RandomAccessIterT, typename SentIterT>
+    void build_samples(is_cardinality_tag, RandomAccessIterT first, SentIterT last) {
+        size_type num_elems = details::iter_distance(first, last);
+        get_num_samples() = details::bits64::idiv_ceil(num_elems, SAMPLE_RATE);
         
         byte_alloc balloc(get_alloc());
         samples_ = byte_alloc_traits::allocate(balloc, sizeof(value_type) * get_num_samples());
         value_type *samples = reinterpret_cast<value_type *>(samples_);
         for (size_type i = 0; i < get_num_samples(); ++i) {
-            samples[i] = data_[i * SAMPLE_RATE];
+            samples[i] = first[i * SAMPLE_RATE];
         }
     }
 
-    void build_samples(is_universe_tag) {
-        const value_type u = max() - min();
+    template<typename RandomAccessIterT, typename SentIterT>
+    void build_samples(is_universe_tag, RandomAccessIterT first, SentIterT last) {
+        const auto minval = *first;
+        const auto maxval = *std::prev(last);
+        const size_type num_elems = details::iter_distance(first, last);
+        const value_type u = maxval - minval;
         get_num_samples() = details::bits64::idiv_ceil(u, SAMPLE_RATE) + 1;
 
         byte_alloc balloc(get_alloc());
@@ -5449,10 +6282,10 @@ private:
         size_type *samples = reinterpret_cast<size_type *>(samples_);
 
         std::uninitialized_fill_n(samples, get_num_samples(), 0);
-        for (size_type i = 0; i < size_; ++i) {
-            ++samples[(data_[i] - min()) / SAMPLE_RATE];
+        for (size_type i = 0; i < num_elems; ++i) {
+            ++samples[(first[i] - minval) / SAMPLE_RATE];
         }
-        samples[get_num_samples() - 1] = size_;
+        samples[get_num_samples() - 1] = num_elems;
 
         size_type prefix = 0;
         for (size_type i = 0; i < get_num_samples() - 1; ++i) {
@@ -5462,28 +6295,35 @@ private:
         }
     }
 
+    template<typename RandomAccessIterT, typename SentIterT>
+    void build_data(is_cardinality_tag, RandomAccessIterT first, SentIterT last) {
+        size_type num_elems = details::iter_distance(first, last);
+        data_ = details::allocate_wpacked_ints<DATA_WIDTH>(get_alloc(), num_elems);
+        for (size_type i = 0; i < num_elems; ++i) {
+            data_.set_value(i, *first++);
+        }
+    }
+
+    template<typename RandomAccessIterT, typename SentIterT>
+    void build_data(is_universe_tag, RandomAccessIterT first, SentIterT last) {
+        size_type num_elems = details::iter_distance(first, last);
+        data_ = details::allocate_wpacked_ints<DATA_WIDTH>(get_alloc(), num_elems);
+        for (size_type i = 0; i < num_elems; ++i) {
+            data_.set_value(i, *first++);
+        }
+    }
+
     // search lower bound with cardinality partitioned samples
     _YAEF_ATTR_NODISCARD size_type do_search_lower_bound(value_type target, is_cardinality_tag) const {
         const value_type *samples = reinterpret_cast<const value_type *>(samples_);
 
-        const value_type *iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
-        size_type sample_index = iter - samples;
+        auto l1_iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
+        size_type sample_index = l1_iter - samples;
 
-        const size_type partition_size = size_ - sample_index * SAMPLE_RATE;
-        iter = details::branchless_lower_bound(data_ + sample_index * SAMPLE_RATE, partition_size, target);
-        return iter - data_;
-    }
-
-    // search lower bound with cardinality partitioned samples
-    _YAEF_ATTR_NODISCARD size_type do_search_upper_bound(value_type target, is_cardinality_tag) const {
-        const value_type *samples = reinterpret_cast<const value_type *>(samples_);
-
-        const value_type *iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
-        size_type sample_index = iter - samples;
-
-        const size_type partition_size = size_ - sample_index * SAMPLE_RATE;
-        iter = details::branchless_upper_bound(data_ + sample_index * SAMPLE_RATE, partition_size, target);
-        return iter - data_;
+        const size_type partition_size = size() - sample_index * SAMPLE_RATE;
+        auto l2_iter = details::branchless_lower_bound(
+            data_.begin() + sample_index * SAMPLE_RATE, partition_size, target);
+        return l2_iter - data_.begin();
     }
 
     // search lower bound with universe partitioned samples
@@ -5493,9 +6333,22 @@ private:
         const size_type *samples = reinterpret_cast<const size_type *>(samples_);
         size_type first = samples[sample_index], 
                   last = samples[sample_index + 1];
-        value_type *iter = details::branchless_lower_bound(data_ + first, last - first, target);
-        size_type idx = iter - data_;
+        auto iter = details::branchless_lower_bound(data_.begin() + first, last - first, target);
+        size_type idx = iter - data_.begin();
         return idx;
+    }
+
+    // search lower bound with cardinality partitioned samples
+    _YAEF_ATTR_NODISCARD size_type do_search_upper_bound(value_type target, is_cardinality_tag) const {
+        const value_type *samples = reinterpret_cast<const value_type *>(samples_);
+
+        auto l1_iter = details::branchless_upper_bound(samples, get_num_samples(), target) - 1;
+        size_type sample_index = l1_iter - samples;
+
+        const size_type partition_size = size() - sample_index * SAMPLE_RATE;
+        auto l2_iter = details::branchless_upper_bound(
+            data_.begin() + sample_index * SAMPLE_RATE, partition_size, target);
+        return l2_iter - data_.begin();
     }
 
     // search upper bound with universe partitioned samples
@@ -5505,8 +6358,8 @@ private:
         const size_type *samples = reinterpret_cast<const size_type *>(samples_);
         size_type first = samples[sample_index], 
                   last = samples[sample_index + 1];
-        value_type *iter = details::branchless_upper_bound(data_ + first, last - first, target);
-        size_type idx = iter - data_;
+        auto iter = details::branchless_upper_bound(data_.begin() + first, last - first, target);
+        size_type idx = iter - data_.begin();
         return idx;
     }
 };
@@ -7253,6 +8106,8 @@ decode_eliasfano(OutputIterT out_first, size_t num_elems, uint32_t low_width,
     return res;
 }
 #endif
+
+template class wpacked_int_buffer<32>;
 
 _YAEF_NAMESPACE_END
 

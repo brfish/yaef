@@ -161,7 +161,7 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
             
             // value is larger than maximum
             REQUIRE(sl.index_of_lower_bound(2000) == data.size());
-            REQUIRE(sl.lower_bound(2000) == sl.data() + sl.size()); // end iterator
+            REQUIRE(sl.lower_bound(2000) == sl.begin() + sl.size()); // end iterator
         }
 
         SECTION("upper bound") {
@@ -182,7 +182,7 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
             
             // value is the maximum
             REQUIRE(sl.index_of_upper_bound(1497) == sl.size());
-            REQUIRE(sl.upper_bound(1497) == sl.data() + sl.size()); // end iterator
+            REQUIRE(sl.upper_bound(1497) == sl.begin() + sl.size()); // end iterator
             
             // value is larger than maximum
             REQUIRE(sl.index_of_upper_bound(2000) == sl.size());
@@ -227,14 +227,14 @@ TEMPLATE_TEST_CASE("sparse_sampled_list_test", "[public]", cardinality_uint32, u
                     size_t actual_lower_idx = sl.index_of_lower_bound(target);
 
                     REQUIRE(actual_lower_idx == expected_lower_idx);
-                    REQUIRE(sl.data() + expected_lower_idx == sl.lower_bound(target));
+                    REQUIRE(sl.begin() + expected_lower_idx == sl.lower_bound(target));
 
                     size_t expected_upper_idx = std::distance(random_data.begin(), 
                         std::upper_bound(random_data.begin(), random_data.end(), target));
                     size_t actual_upper_idx = sl.index_of_upper_bound(target);
 
                     REQUIRE(actual_upper_idx == expected_upper_idx);
-                    REQUIRE(sl.data() + expected_upper_idx == sl.upper_bound(target));
+                    REQUIRE(sl.begin() + expected_upper_idx == sl.upper_bound(target));
                 }
             }
         }

@@ -114,3 +114,182 @@ TEST_CASE("packed_int_view_test", "[private]") {
         REQUIRE(blocks[num_blocks - 1] == yaef::details::bits64::make_mask_lsb1(num_residual_bits));
     }
 }
+
+TEST_CASE("wpacked_int_view_test", "[private]") {
+    using yaef::details::bits64::wpacked_int_view;
+    std::allocator<uint8_t> alloc;
+
+    SECTION("allocate and deallocate") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t VAL_WIDTH = 23;
+
+        auto ints = yaef::details::allocate_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        REQUIRE(ints.size() == NUM_INTS);
+        REQUIRE_NOTHROW(yaef::details::deallocate_wpacked_ints(alloc, ints));
+    }
+
+    SECTION("random access (get/set)") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t MIN_INT = 10;
+        constexpr uint32_t MAX_INT = 100000;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+        
+        ints.prefetch_for_read(0, ints.size());
+        for (size_t i = 0; i < ints.size(); ++i) {
+            uint32_t actual = ints.get_value(i);
+            uint32_t expected = gen_result[i];
+            REQUIRE(actual == expected);
+        }
+    }
+
+    SECTION("random access (get/set) small width 4") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t MIN_INT = 10;
+        constexpr uint32_t MAX_INT = 15;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+        
+        ints.prefetch_for_read(0, ints.size());
+        for (size_t i = 0; i < ints.size(); ++i) {
+            uint32_t actual = ints.get_value(i);
+            uint32_t expected = gen_result[i];
+            REQUIRE(actual == expected);
+        }
+    }
+
+    SECTION("random access (get/set) small width 2") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t MIN_INT = 0;
+        constexpr uint32_t MAX_INT = 3;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+        
+        ints.prefetch_for_read(0, ints.size());
+        for (size_t i = 0; i < ints.size(); ++i) {
+            uint32_t actual = ints.get_value(i);
+            uint32_t expected = gen_result[i];
+            REQUIRE(actual == expected);
+        }
+    }
+
+    SECTION("random access (get/set) big width 48") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint64_t MIN_INT = 10;
+        constexpr uint64_t MAX_INT = (static_cast<uint64_t>(1) << 48) - 1;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint64_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+        
+        ints.prefetch_for_read(0, ints.size());
+        for (size_t i = 0; i < ints.size(); ++i) {
+            uint32_t actual = ints.get_value(i);
+            uint32_t expected = gen_result[i];
+            REQUIRE(actual == expected);
+        }
+    }
+
+    SECTION("duplicate") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t MIN_INT = 10;
+        constexpr uint32_t MAX_INT = 100000;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+
+        auto copy = yaef::details::duplicate_wpacked_ints(alloc, ints);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, copy); };
+        
+        REQUIRE(ints.size() == copy.size());
+        for (size_t i = 0; i < ints.size(); ++i)
+            REQUIRE(ints.get_value(i) == copy.get_value(i));
+    }
+
+    SECTION("eqaul") {
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t MIN_INT = 10;
+        constexpr uint32_t MAX_INT = 100000;
+        constexpr uint32_t VAL_WIDTH = yaef::details::bits64::constexpr_bit_width<MAX_INT>::value;
+
+        yaef::test_utils::uniform_int_generator<uint32_t> gen{MIN_INT, MAX_INT};
+        auto gen_result = gen.make_list(NUM_INTS);
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); };
+        for (size_t i = 0; i < ints.size(); ++i) {
+            ints.set_value(i, gen_result[i]);
+        }
+        REQUIRE(ints == ints);
+
+        auto copy = yaef::details::duplicate_wpacked_ints(alloc, ints);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, copy); };
+
+        REQUIRE(ints == copy);
+        
+        copy.set_value(0, copy.get_value(0) + 1);
+        REQUIRE(ints != copy);
+    }
+    
+    SECTION("set/clear all bits") {
+        using block_type = wpacked_int_view<32>::block_type;
+        constexpr uint32_t BLOCK_WIDTH = wpacked_int_view<32>::BLOCK_WIDTH;
+        constexpr size_t NUM_INTS = 10000;
+        constexpr uint32_t VAL_WIDTH = 13;
+
+        auto ints = yaef::details::allocate_uninit_wpacked_ints<VAL_WIDTH>(alloc, NUM_INTS);
+        YAEF_DEFER { yaef::details::deallocate_wpacked_ints(alloc, ints); }; 
+
+        const size_t num_blocks = ints.num_blocks();
+        const auto *blocks = ints.blocks();
+
+        ints.clear_all_bits();
+        for (size_t i = 0; i < num_blocks; ++i) {
+            REQUIRE(blocks[i] == 0);
+        }
+
+        ints.set_all_bits();
+        for (size_t i = 0; i < num_blocks - 1; ++i) {
+            REQUIRE(blocks[i] == std::numeric_limits<block_type>::max());
+        }
+        const size_t num_residual_bits = NUM_INTS * VAL_WIDTH - (num_blocks - 1) * BLOCK_WIDTH;
+        REQUIRE(blocks[num_blocks - 1] == yaef::details::bits64::make_mask_lsb1(num_residual_bits));
+    }
+}

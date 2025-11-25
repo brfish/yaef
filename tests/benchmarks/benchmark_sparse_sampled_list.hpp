@@ -37,7 +37,7 @@ public:
     }
     
     void sequentially_access() {
-        auto iter = list_.data();
+        auto iter = list_.begin();
         for (size_type i = 0; i < list_.size(); ++i, ++iter) {
             int_type val = *iter;
             dont_optimize(val);
@@ -95,7 +95,7 @@ public:
     }
     
     void sequentially_access() {
-        auto iter = list_.data();
+        auto iter = list_.begin();
         for (size_type i = 0; i < list_.size(); ++i, ++iter) {
             int_type val = *iter;
             dont_optimize(val);
