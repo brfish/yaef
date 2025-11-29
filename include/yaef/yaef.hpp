@@ -3212,6 +3212,319 @@ private:
     T value_;
 };
 
+class selectable_dense_bits_v2 {
+    static constexpr size_t L1_SAMPLE_WIDTH           = 10;
+    static constexpr size_t L1_SAMPLE_RATE            = 1ULL << L1_SAMPLE_WIDTH;
+    static constexpr size_t L2_SAMPLE_RATE_S          = L1_SAMPLE_RATE / 4;
+    static constexpr size_t L2_SAMPLE_RATE_D          = L1_SAMPLE_RATE / 16;
+    static constexpr size_t L2_SAMPLE_DENSE_THRESHOLD = 1ULL << 16;
+    static constexpr size_t L2_SAMPLE_BLOCKS          = 4;
+    static constexpr size_t INTERLEAVE_STEP           = L2_SAMPLE_BLOCKS + 1;
+
+public:
+    using size_type = size_t;
+
+public:
+    selectable_dense_bits_v2() = default;
+
+    template<typename AllocT>
+    selectable_dense_bits_v2(AllocT &alloc, bits64::bit_view bits, bits64::bits_stat_info stat_info)
+        : bits_(bits) {
+        num_ones_ = stat_info.num_ones();
+
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(stat_info.num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(stat_info.num_ones(), L1_SAMPLE_RATE) + 1;
+        
+        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        balloc_type balloc(alloc);
+
+        zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+        ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+        
+        size_type last_one_idx = 0, last_zero_idx = 0;
+        for (size_type i = 0, bit_one_idx = 0, bit_zero_idx = 0; i < bits_.size(); ++i) {
+            bool bit = bits_.get_bit(i);
+            if (bit) {
+                if (bit_one_idx % L1_SAMPLE_RATE == 0) {
+                    ones_samples_[bit_one_idx / L1_SAMPLE_RATE * INTERLEAVE_STEP] = i;
+                }
+                last_one_idx = i;
+                ++bit_one_idx;
+            } else {
+                if (bit_zero_idx % L1_SAMPLE_RATE == 0) {
+                    zeros_samples_[bit_zero_idx / L1_SAMPLE_RATE * INTERLEAVE_STEP] = i;
+                }
+                last_zero_idx = i;
+                ++bit_zero_idx;
+            }
+        }
+        zeros_samples_[(zeros_num_l1_samples - 1) * INTERLEAVE_STEP] = last_zero_idx + 1;
+        ones_samples_[(ones_num_l1_samples - 1) * INTERLEAVE_STEP] = last_one_idx + 1;
+
+        auto sample_uniform = [&](uint64_t *samples, size_type l1_sample_idx, 
+                                 size_type idx_first, size_type idx_last, 
+                                 size_type sample_rate, bool bit_type) {
+            for (size_t j = idx_first, l2_sample_idx = 0; j < idx_last; ++j) {
+                if (bits_.get_bit(j) != bit_type) {
+                    continue;
+                }
+                if (l2_sample_idx % sample_rate == 0) {
+                    if (sample_rate == L2_SAMPLE_RATE_S) {
+                        samples[l1_sample_idx * INTERLEAVE_STEP + 1 + l2_sample_idx / sample_rate] = j - idx_first; 
+                    } else if (sample_rate == L2_SAMPLE_RATE_D) {
+                        auto samples16 = reinterpret_cast<uint16_t *>(samples + l1_sample_idx * INTERLEAVE_STEP + 1);
+                        samples16[l2_sample_idx / sample_rate] = j - idx_first;
+                    }
+                }
+                ++l2_sample_idx;
+            }
+        };
+        
+        for (size_type i = 0; i < zeros_num_l1_samples - 1; ++i) {
+            size_type idx_first = zeros_samples_[i * INTERLEAVE_STEP];
+            size_type idx_last = zeros_samples_[(i + 1) * INTERLEAVE_STEP];
+            size_type stride =  idx_last - idx_first;
+
+            if (stride < L2_SAMPLE_DENSE_THRESHOLD) {
+                sample_uniform(zeros_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_D, false);
+                zeros_samples_[i * INTERLEAVE_STEP] <<= 1;
+            } else {
+                sample_uniform(zeros_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_S, false);
+                zeros_samples_[i * INTERLEAVE_STEP] = (zeros_samples_[i * INTERLEAVE_STEP] << 1) | 0x1;
+            }
+        }
+
+        for (size_type i = 0; i < ones_num_l1_samples - 1; ++i) {
+            size_type idx_first = ones_samples_[i * INTERLEAVE_STEP];
+            size_type idx_last = ones_samples_[(i + 1) * INTERLEAVE_STEP];
+            size_type stride =  idx_last - idx_first;
+
+            if (stride < L2_SAMPLE_DENSE_THRESHOLD) {
+                sample_uniform(ones_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_D, true);
+                ones_samples_[i * INTERLEAVE_STEP] <<= 1;
+            } else {
+                sample_uniform(ones_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_S, true);
+                ones_samples_[i * INTERLEAVE_STEP] = (ones_samples_[i * INTERLEAVE_STEP] << 1) | 0x1;
+            }
+        }
+    }
+
+    template<typename AllocT>
+    selectable_dense_bits_v2(AllocT &alloc, bits64::bit_view bits)
+        : selectable_dense_bits_v2(alloc, bits, bits64::stats_bits(bits)) { }
+
+    template<typename AllocT>
+    void deallocate(AllocT &alloc) {
+        deallocate_bits(alloc, bits_);
+        
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+
+        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        balloc_type balloc(alloc);
+
+        std::allocator_traits<balloc_type>::deallocate(balloc, zeros_samples_, zeros_num_l1_samples * INTERLEAVE_STEP);
+        std::allocator_traits<balloc_type>::deallocate(balloc, ones_samples_, ones_num_l1_samples * INTERLEAVE_STEP);
+    }
+
+    template<typename AllocT>
+    _YAEF_ATTR_NODISCARD selectable_dense_bits_v2 duplicate(AllocT &alloc) const {
+        selectable_dense_bits_v2 cpy;
+        cpy.bits_ = duplicate_bits(alloc, bits_);
+        cpy.num_ones_ = num_ones_;
+        
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+        
+        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        balloc_type balloc(alloc);
+
+        cpy.zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+        cpy.ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+        memcpy(cpy.zeros_samples_, zeros_samples_, sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP);
+        memcpy(cpy.ones_samples_, ones_samples_, sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP);
+
+        return cpy;
+    }
+
+    _YAEF_ATTR_NODISCARD size_type size() const noexcept { return bits_.size(); }
+    _YAEF_ATTR_NODISCARD size_type num_ones() const noexcept { return num_ones_; }
+    _YAEF_ATTR_NODISCARD size_type num_zeros() const noexcept { return size() - num_ones_; }
+    _YAEF_ATTR_NODISCARD const bits64::bit_view &get_bits() const noexcept { return bits_; }
+
+    _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+
+        return bits_.space_usage_in_bytes() +
+               sizeof(uint64_t) * INTERLEAVE_STEP * (zeros_num_l1_samples + ones_num_l1_samples);
+    }
+
+    _YAEF_ATTR_NODISCARD size_type select_one(size_type rank) const noexcept {
+        const size_type l1_idx = rank / L1_SAMPLE_RATE,
+                        l1_rem = rank % L1_SAMPLE_RATE;
+        uint64_t l1_sample = ones_samples_[l1_idx * INTERLEAVE_STEP];
+        bool is_dense = !(l1_sample & 0x1);
+        l1_sample >>= 1;
+
+        size_type res = l1_sample;
+        size_type l2_rem = 0;
+
+        if (is_dense) {
+            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
+            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
+            res += reinterpret_cast<const uint16_t *>(ones_samples_ + l1_idx * INTERLEAVE_STEP + 1)[l2_idx];
+
+        } else {
+            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
+            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
+            res += ones_samples_[l1_idx * INTERLEAVE_STEP + 1 + l2_idx];
+        }
+
+        if (l2_rem == 0) {
+            return res;
+        }
+
+        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
+        size_type block_idx = res / BITS_BLOCK_WIDTH;
+        uint64_t block = bits_.blocks()[block_idx] & (~static_cast<uint64_t>(0) << (res % BITS_BLOCK_WIDTH));
+        
+        while (true) {
+            uint32_t num_ones = bits64::popcount(block);
+            if (l2_rem < num_ones) { break; }
+            l2_rem -= num_ones;
+            block = bits_.blocks()[++block_idx];
+        }
+
+        return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+    }
+
+    _YAEF_ATTR_NODISCARD size_type select_zero(size_type rank) const noexcept {
+        const size_type l1_idx = rank / L1_SAMPLE_RATE,
+                        l1_rem = rank % L1_SAMPLE_RATE;
+        uint64_t l1_sample = zeros_samples_[l1_idx * INTERLEAVE_STEP];
+        bool is_dense = !(l1_sample & 0x1);
+        l1_sample >>= 1;
+
+        size_type res = l1_sample;
+        size_type l2_rem = 0;
+
+        if (is_dense) {
+            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
+            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
+            res += reinterpret_cast<const uint16_t *>(zeros_samples_ + l1_idx * INTERLEAVE_STEP + 1)[l2_idx];
+
+        } else {
+            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
+            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
+            res += zeros_samples_[l1_idx * INTERLEAVE_STEP + 1 + l2_idx];
+        }
+
+        if (l2_rem == 0) {
+            return res;
+        }
+
+        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
+        size_type block_idx = res / BITS_BLOCK_WIDTH;
+        uint64_t block = ~bits_.blocks()[block_idx] & (~static_cast<uint64_t>(0) << (res % BITS_BLOCK_WIDTH));
+
+        while (true) {
+            uint32_t num_ones = bits64::popcount(block);
+            if (l2_rem < num_ones) { break; }
+            l2_rem -= num_ones;
+            block = ~bits_.blocks()[++block_idx];
+        }
+
+        return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+    }
+
+    void swap(selectable_dense_bits_v2 &other) noexcept {
+        std::swap(bits_, other.bits_);
+        std::swap(zeros_samples_, other.zeros_samples_);
+        std::swap(ones_samples_, other.ones_samples_);
+        std::swap(num_ones_, other.num_ones_);
+    }
+
+    friend bool operator==(const selectable_dense_bits_v2 &lhs, const selectable_dense_bits_v2 &rhs) noexcept;
+#if __cplusplus < 202002L
+    friend bool operator!=(const selectable_dense_bits_v2 &lhs, const selectable_dense_bits_v2 &rhs) noexcept;
+#endif
+
+    error_code serialize(serializer &ser) const {
+        error_code ec = bits_.serialize(ser);
+        if (ec != error_code::success) {
+            return ec;
+        }
+
+        ser.write(num_ones_);
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+
+        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(zeros_samples_), 
+            sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
+            return error_code::serialize_io;
+        }
+
+        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(ones_samples_), 
+            sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
+            return error_code::serialize_io;
+        }
+
+        return error_code::success;
+    }
+
+    template<typename AllocT>
+    error_code deserialize(AllocT &alloc, deserializer &deser) {
+        error_code ec = bits_.deserialize(alloc, deser);
+        if (ec != error_code::success) {
+            return ec;
+        }
+
+        deser.read(num_ones_);
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+
+        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        balloc_type balloc(alloc);
+
+        zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+        ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+
+        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(zeros_samples_), 
+            sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
+            return error_code::deserialize_io;
+        }
+
+        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(ones_samples_), 
+            sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
+            return error_code::deserialize_io;
+        }
+
+        return error_code::success;
+    }
+
+private:
+    bits64::bit_view  bits_;
+    uint64_t         *zeros_samples_;
+    uint64_t         *ones_samples_;
+    size_type         num_ones_;
+};
+
+_YAEF_ATTR_NODISCARD inline bool 
+operator==(const selectable_dense_bits_v2 &lhs, const selectable_dense_bits_v2 &rhs) noexcept {
+    if (_YAEF_UNLIKELY(std::addressof(lhs) == std::addressof(rhs))) {
+        return true;
+    }
+    return lhs.bits_ == rhs.bits_;
+}
+
+#if __cplusplus < 202002L
+_YAEF_ATTR_NODISCARD inline bool 
+operator!=(const selectable_dense_bits_v2 &lhs, const selectable_dense_bits_v2 &rhs) noexcept {
+    return !(lhs == rhs);
+}
+#endif
+
 class selectable_dense_bits {
 public:
     using size_type = size_t;
@@ -3912,7 +4225,7 @@ class eliasfano_list {
 
     friend struct details::serialize_friend_access;
 
-    using high_bits_type      = details::selectable_dense_bits;
+    using high_bits_type      = details::selectable_dense_bits_v2;
     using low_bits_type       = details::bits64::packed_int_view;
     using alloc_traits        = std::allocator_traits<AllocT>;
     using unsigned_value_type = uint64_t;
