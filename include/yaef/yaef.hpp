@@ -1800,9 +1800,9 @@ struct wpacked_traits {
 
         const size_t bit_index = index * W;
         const size_t block_index = bit_index / BLOCK_WIDTH, 
-                        block_offset = bit_index % BLOCK_WIDTH;
+                     block_offset = bit_index % BLOCK_WIDTH;
 
-#if _YAEF_INTRINSICS_HAVE_AVX2 && defined(__SIZEOF_INT128__) && __SIZEOF_INT128__ == 16
+#if defined(__SIZEOF_INT128__) && __SIZEOF_INT128__ == 16
         __uint128_t combined;
         memcpy(&combined, blocks + block_index, sizeof(combined));
         uint64_t result = static_cast<uint64_t>(combined >> block_offset);
@@ -3235,11 +3235,13 @@ public:
         const size_type zeros_num_l1_samples = bits64::idiv_ceil(stat_info.num_zeros(), L1_SAMPLE_RATE) + 1;
         const size_type ones_num_l1_samples = bits64::idiv_ceil(stat_info.num_ones(), L1_SAMPLE_RATE) + 1;
         
-        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
-        balloc_type balloc(alloc);
+        using alloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        alloc_type new_alloc(alloc);
 
-        zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
-        ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+        zeros_samples_ = std::allocator_traits<alloc_type>::allocate(
+            new_alloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+        ones_samples_ = std::allocator_traits<alloc_type>::allocate(
+            new_alloc, ones_num_l1_samples * INTERLEAVE_STEP);
         
         size_type last_one_idx = 0, last_zero_idx = 0;
         for (size_type i = 0, bit_one_idx = 0, bit_zero_idx = 0; i < bits_.size(); ++i) {
@@ -3260,25 +3262,6 @@ public:
         }
         zeros_samples_[(zeros_num_l1_samples - 1) * INTERLEAVE_STEP] = last_zero_idx + 1;
         ones_samples_[(ones_num_l1_samples - 1) * INTERLEAVE_STEP] = last_one_idx + 1;
-
-        auto sample_uniform = [&](uint64_t *samples, size_type l1_sample_idx, 
-                                 size_type idx_first, size_type idx_last, 
-                                 size_type sample_rate, bool bit_type) {
-            for (size_t j = idx_first, l2_sample_idx = 0; j < idx_last; ++j) {
-                if (bits_.get_bit(j) != bit_type) {
-                    continue;
-                }
-                if (l2_sample_idx % sample_rate == 0) {
-                    if (sample_rate == L2_SAMPLE_RATE_S) {
-                        samples[l1_sample_idx * INTERLEAVE_STEP + 1 + l2_sample_idx / sample_rate] = j - idx_first; 
-                    } else if (sample_rate == L2_SAMPLE_RATE_D) {
-                        auto samples16 = reinterpret_cast<uint16_t *>(samples + l1_sample_idx * INTERLEAVE_STEP + 1);
-                        samples16[l2_sample_idx / sample_rate] = j - idx_first;
-                    }
-                }
-                ++l2_sample_idx;
-            }
-        };
         
         for (size_type i = 0; i < zeros_num_l1_samples - 1; ++i) {
             size_type idx_first = zeros_samples_[i * INTERLEAVE_STEP];
@@ -3286,10 +3269,10 @@ public:
             size_type stride =  idx_last - idx_first;
 
             if (stride < L2_SAMPLE_DENSE_THRESHOLD) {
-                sample_uniform(zeros_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_D, false);
+                do_sample_uniform<false, L2_SAMPLE_RATE_D>(zeros_samples_, i, idx_first, idx_last);
                 zeros_samples_[i * INTERLEAVE_STEP] <<= 1;
             } else {
-                sample_uniform(zeros_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_S, false);
+                do_sample_uniform<false, L2_SAMPLE_RATE_S>(zeros_samples_, i, idx_first, idx_last);
                 zeros_samples_[i * INTERLEAVE_STEP] = (zeros_samples_[i * INTERLEAVE_STEP] << 1) | 0x1;
             }
         }
@@ -3300,10 +3283,10 @@ public:
             size_type stride =  idx_last - idx_first;
 
             if (stride < L2_SAMPLE_DENSE_THRESHOLD) {
-                sample_uniform(ones_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_D, true);
+                do_sample_uniform<true, L2_SAMPLE_RATE_D>(ones_samples_, i, idx_first, idx_last);
                 ones_samples_[i * INTERLEAVE_STEP] <<= 1;
             } else {
-                sample_uniform(ones_samples_, i, idx_first, idx_last, L2_SAMPLE_RATE_S, true);
+                do_sample_uniform<true, L2_SAMPLE_RATE_S>(ones_samples_, i, idx_first, idx_last);
                 ones_samples_[i * INTERLEAVE_STEP] = (ones_samples_[i * INTERLEAVE_STEP] << 1) | 0x1;
             }
         }
@@ -3320,11 +3303,17 @@ public:
         const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
         const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
 
-        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
-        balloc_type balloc(alloc);
+        using alloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        alloc_type new_alloc(alloc);
 
-        std::allocator_traits<balloc_type>::deallocate(balloc, zeros_samples_, zeros_num_l1_samples * INTERLEAVE_STEP);
-        std::allocator_traits<balloc_type>::deallocate(balloc, ones_samples_, ones_num_l1_samples * INTERLEAVE_STEP);
+        if (zeros_samples_) {
+            std::allocator_traits<alloc_type>::deallocate(
+                new_alloc, zeros_samples_, zeros_num_l1_samples * INTERLEAVE_STEP);
+        }
+        if (ones_samples_) {
+            std::allocator_traits<alloc_type>::deallocate(
+                new_alloc, ones_samples_, ones_num_l1_samples * INTERLEAVE_STEP);
+        }
     }
 
     template<typename AllocT>
@@ -3336,11 +3325,13 @@ public:
         const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
         const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
         
-        using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
-        balloc_type balloc(alloc);
+        using alloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
+        alloc_type new_alloc(alloc);
 
-        cpy.zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
-        cpy.ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+        cpy.zeros_samples_ = std::allocator_traits<alloc_type>::allocate(
+            new_alloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+        cpy.ones_samples_ = std::allocator_traits<alloc_type>::allocate(
+            new_alloc, ones_num_l1_samples * INTERLEAVE_STEP);
         memcpy(cpy.zeros_samples_, zeros_samples_, sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP);
         memcpy(cpy.ones_samples_, ones_samples_, sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP);
 
@@ -3353,89 +3344,43 @@ public:
     _YAEF_ATTR_NODISCARD const bits64::bit_view &get_bits() const noexcept { return bits_; }
 
     _YAEF_ATTR_NODISCARD size_type space_usage_in_bytes() const noexcept {
-        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
-        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
+        const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE);
+        const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE);
 
         return bits_.space_usage_in_bytes() +
                sizeof(uint64_t) * INTERLEAVE_STEP * (zeros_num_l1_samples + ones_num_l1_samples);
     }
 
     _YAEF_ATTR_NODISCARD size_type select_one(size_type rank) const noexcept {
-        const size_type l1_idx = rank / L1_SAMPLE_RATE,
-                        l1_rem = rank % L1_SAMPLE_RATE;
-        uint64_t l1_sample = ones_samples_[l1_idx * INTERLEAVE_STEP];
-        bool is_dense = !(l1_sample & 0x1);
-        l1_sample >>= 1;
-
-        size_type res = l1_sample;
-        size_type l2_rem = 0;
-
-        if (is_dense) {
-            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
-            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
-            res += reinterpret_cast<const uint16_t *>(ones_samples_ + l1_idx * INTERLEAVE_STEP + 1)[l2_idx];
-
-        } else {
-            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
-            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
-            res += ones_samples_[l1_idx * INTERLEAVE_STEP + 1 + l2_idx];
-        }
-
-        if (l2_rem == 0) {
-            return res;
-        }
-
-        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
-        size_type block_idx = res / BITS_BLOCK_WIDTH;
-        uint64_t block = bits_.blocks()[block_idx] & (~static_cast<uint64_t>(0) << (res % BITS_BLOCK_WIDTH));
-        
-        while (true) {
-            uint32_t num_ones = bits64::popcount(block);
-            if (l2_rem < num_ones) { break; }
-            l2_rem -= num_ones;
-            block = bits_.blocks()[++block_idx];
-        }
-
-        return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+        _YAEF_ASSERT(rank < num_ones());
+        return select_impl<true>(rank);
     }
 
     _YAEF_ATTR_NODISCARD size_type select_zero(size_type rank) const noexcept {
-        const size_type l1_idx = rank / L1_SAMPLE_RATE,
-                        l1_rem = rank % L1_SAMPLE_RATE;
-        uint64_t l1_sample = zeros_samples_[l1_idx * INTERLEAVE_STEP];
-        bool is_dense = !(l1_sample & 0x1);
-        l1_sample >>= 1;
+        _YAEF_ASSERT(rank < num_zeros());
+        return select_impl<false>(rank);
+    }
 
-        size_type res = l1_sample;
-        size_type l2_rem = 0;
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> select_both_one(size_type rank) const noexcept {
+        _YAEF_ASSERT(rank + 1 < num_ones());
+        return select_both_impl<true>(rank);
+    }
 
-        if (is_dense) {
-            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
-            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
-            res += reinterpret_cast<const uint16_t *>(zeros_samples_ + l1_idx * INTERLEAVE_STEP + 1)[l2_idx];
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> select_both_zero(size_type rank) const noexcept {
+        _YAEF_ASSERT(rank + 1 < num_zeros());
+        return select_both_impl<false>(rank);
+    }
 
-        } else {
-            const size_type l2_idx = l1_rem / L2_SAMPLE_RATE_D;
-            l2_rem = l1_rem % L2_SAMPLE_RATE_D;
-            res += zeros_samples_[l1_idx * INTERLEAVE_STEP + 1 + l2_idx];
-        }
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> 
+    select_both_one_bounded(size_type rank, size_type bounded_val) const noexcept {
+        _YAEF_ASSERT(rank < num_zeros());
+        return select_both_bounded_impl<true>(rank, bounded_val);
+    }
 
-        if (l2_rem == 0) {
-            return res;
-        }
-
-        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
-        size_type block_idx = res / BITS_BLOCK_WIDTH;
-        uint64_t block = ~bits_.blocks()[block_idx] & (~static_cast<uint64_t>(0) << (res % BITS_BLOCK_WIDTH));
-
-        while (true) {
-            uint32_t num_ones = bits64::popcount(block);
-            if (l2_rem < num_ones) { break; }
-            l2_rem -= num_ones;
-            block = ~bits_.blocks()[++block_idx];
-        }
-
-        return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> 
+    select_both_zero_bounded(size_type rank, size_type bounded_val) const noexcept {
+        _YAEF_ASSERT(rank < num_zeros());
+        return select_both_bounded_impl<false>(rank, bounded_val);
     }
 
     void swap(selectable_dense_bits_v2 &other) noexcept {
@@ -3505,9 +3450,127 @@ public:
 
 private:
     bits64::bit_view  bits_;
-    uint64_t         *zeros_samples_;
-    uint64_t         *ones_samples_;
-    size_type         num_ones_;
+    uint64_t         *zeros_samples_ = nullptr;
+    uint64_t         *ones_samples_ = nullptr;
+    size_type         num_ones_ = 0;
+
+    template<bool BitType, size_type SampleRate>
+    void do_sample_uniform(uint64_t *samples, size_type l1_sample_idx, 
+                           size_type idx_first, size_type idx_last) {
+        for (size_t j = idx_first, l2_sample_idx = 0; j < idx_last; ++j) {
+            if (bits_.get_bit(j) != BitType) {
+                continue;
+            }
+            if (l2_sample_idx % SampleRate == 0) {
+                if (SampleRate == L2_SAMPLE_RATE_S) {
+                    samples[l1_sample_idx * INTERLEAVE_STEP + 1 + l2_sample_idx / SampleRate] = j - idx_first; 
+                } else if (SampleRate == L2_SAMPLE_RATE_D) {
+                    auto samples16 = reinterpret_cast<uint16_t *>(samples + l1_sample_idx * INTERLEAVE_STEP + 1);
+                    samples16[l2_sample_idx / SampleRate] = j - idx_first;
+                }
+            }
+            ++l2_sample_idx;
+        }
+    };
+
+    template<bool BitType>
+    _YAEF_ATTR_NODISCARD size_type select_impl(size_type rank) const noexcept {
+        const size_type l1_idx = rank / L1_SAMPLE_RATE,
+                        l1_rem = rank % L1_SAMPLE_RATE;
+        uint64_t l1_sample = (BitType ? ones_samples_ : zeros_samples_)[l1_idx * INTERLEAVE_STEP];
+        bool is_dense = !(l1_sample & 0x1);
+        l1_sample >>= 1;
+
+        const size_type sample_rate = is_dense ? L2_SAMPLE_RATE_D : L2_SAMPLE_RATE_S;
+        const uint32_t sample_rate_width = is_dense 
+            ? bits64::constexpr_bit_width<L2_SAMPLE_RATE_D - 1>::value
+            : bits64::constexpr_bit_width<L2_SAMPLE_RATE_S - 1>::value;
+
+        const size_type l2_idx = l1_rem >> sample_rate_width;
+        size_type l2_rem = l1_rem & (sample_rate - 1);
+
+        const uint64_t *samples_base = (BitType ? ones_samples_ : zeros_samples_) + l1_idx * INTERLEAVE_STEP + 1;
+        const uint16_t *samples16_base = reinterpret_cast<const uint16_t *>(samples_base);
+        size_type start = l1_sample + (is_dense ? samples16_base[l2_idx] : samples_base[l2_idx]);
+
+        if (l2_rem == 0) {
+            return start;
+        }
+
+        auto fetch_block = [](uint64_t b) -> uint64_t {
+            return BitType ? b : ~b;
+        };
+
+        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
+        size_type block_idx = start / BITS_BLOCK_WIDTH;
+        const size_type block_rem = start % BITS_BLOCK_WIDTH;
+        uint64_t block = fetch_block(bits_.blocks()[block_idx]) & bits64::make_mask_msb1(BITS_BLOCK_WIDTH - block_rem);
+
+        {
+            uint32_t num_ones = bits64::popcount(block);
+            if (l2_rem < num_ones) {
+                return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+            }
+            l2_rem -= num_ones;
+        }
+        
+        while (true) {
+            block = fetch_block(bits_.blocks()[++block_idx]);
+            uint32_t num_ones = bits64::popcount(block);
+            if (l2_rem < num_ones) { break; }
+            l2_rem -= num_ones;
+        }
+        return block_idx * BITS_BLOCK_WIDTH + bits64::select_one(block, l2_rem);
+
+    }
+
+    template<bool BitType>
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> select_both_impl(size_type rank) const noexcept {
+        size_type first_pos = select_impl<BitType>(rank);
+
+        auto fetch_block = [](uint64_t b) -> uint64_t {
+            return BitType ? b : ~b;
+        };
+
+        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
+        size_type block_idx = first_pos / BITS_BLOCK_WIDTH;
+        uint64_t block = fetch_block(bits_.blocks()[block_idx]) & 
+                         bits64::make_mask_msb1(BITS_BLOCK_WIDTH - first_pos % BITS_BLOCK_WIDTH);
+        block &= block - 1;
+        while (!block) {
+            block = fetch_block(bits_.blocks()[++block_idx]);
+        }
+        
+        size_type second_pos = block_idx * BITS_BLOCK_WIDTH + bits64::count_trailing_zero(block);
+        return std::make_pair(first_pos, second_pos);
+    }
+
+    template<bool BitType>
+    _YAEF_ATTR_NODISCARD std::pair<size_type, size_type> 
+    select_both_bounded_impl(size_type rank, size_type bounded_val) const noexcept {
+        const size_type num_expected_bits = BitType ? num_ones() : num_zeros();
+        
+        size_type first_pos = select_impl<BitType>(rank);
+        if (_YAEF_UNLIKELY(rank + 1 == num_expected_bits)) {
+            return std::make_pair(first_pos, bounded_val);
+        }
+
+        auto fetch_block = [](uint64_t b) -> uint64_t {
+            return BitType ? b : ~b;
+        };
+
+        constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
+        size_type block_idx = first_pos / BITS_BLOCK_WIDTH;
+        uint64_t block = fetch_block(bits_.blocks()[block_idx]) & 
+                         bits64::make_mask_msb1(BITS_BLOCK_WIDTH - first_pos % BITS_BLOCK_WIDTH);
+        block &= block - 1;
+        while (!block) {
+            block = fetch_block(bits_.blocks()[++block_idx]);
+        }
+        
+        size_type second_pos = block_idx * BITS_BLOCK_WIDTH + bits64::count_trailing_zero(block);
+        return std::make_pair(first_pos, second_pos);
+    }
 };
 
 _YAEF_ATTR_NODISCARD inline bool 
@@ -4302,8 +4365,8 @@ public:
 
         auto u = static_cast<unsigned_value_type>(sorted_info.max) - 
                  static_cast<unsigned_value_type>(sorted_info.min);
-        const uint32_t low_width = details::bits64::bit_width(u / sorted_info.num);
-        unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
+        uint32_t low_width = std::max<uint32_t>(details::bits64::bit_width(u / sorted_info.num), 1);
+        unchecked_init_with_low_width(first, last, sorted_info, low_width);
     }
 
     _YAEF_REQUIRES_RANDOM_ACCESS_ITER(RandomAccessIterT, SentIterT, std::is_integral)
@@ -4313,8 +4376,8 @@ public:
         auto sorted_info = sorted_seq_info::unchecked_create(first, last);
         auto u = static_cast<unsigned_value_type>(sorted_info.max) - 
                  static_cast<unsigned_value_type>(sorted_info.min);
-        const uint32_t low_width = details::bits64::bit_width(u / sorted_info.num);
-        unchecked_init_with_low_width(first, last, sorted_info, std::max<uint32_t>(low_width, 1));
+        uint32_t low_width = std::max<uint32_t>(details::bits64::bit_width(u / sorted_info.num), 1);
+        unchecked_init_with_low_width(first, last, sorted_info, low_width);
     }
 
     eliasfano_list(std::initializer_list<value_type> initlist)
@@ -4694,12 +4757,15 @@ private:
             return search_result{0, size()};
         }
 
-        const size_type num_zeros = high_bits_.size() - size();
         const unsigned_value_type t = to_stored_value(target);
         const unsigned_value_type h = split_high_bits(t);
         const unsigned_value_type l = split_low_bits(t);
-        const size_type start = high_bits_.select_zero(h) - h;
-        const size_type end = h + 1 == num_zeros ? size() : high_bits_.select_zero(h + 1) - h - 1;
+
+        size_type start, end;
+        std::tie(start, end) = high_bits_.select_both_zero_bounded(h, size() + h + 1);
+        start -= h;
+        end -= h + 1;
+
         size_type len = end - start;
 
         size_type result = end;
