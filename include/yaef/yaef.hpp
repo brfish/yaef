@@ -3504,7 +3504,8 @@ private:
         constexpr size_type BITS_BLOCK_WIDTH = bits64::bit_view::BLOCK_WIDTH;
         size_type block_idx = start / BITS_BLOCK_WIDTH;
         const size_type block_rem = start % BITS_BLOCK_WIDTH;
-        uint64_t block = fetch_block(bits_.blocks()[block_idx]) & bits64::make_mask_msb1(BITS_BLOCK_WIDTH - block_rem);
+        uint64_t block = fetch_block(bits_.blocks()[block_idx]) & 
+                         bits64::make_mask_msb1(BITS_BLOCK_WIDTH - block_rem);
 
         {
             uint32_t num_ones = bits64::popcount(block);
@@ -6319,12 +6320,12 @@ template<typename T, sample_strategy Strategy = sample_strategy::cardinality,
 class sparse_sampled_list {
     friend struct details::serialize_friend_access;
 
-    using alloc_traits           = std::allocator_traits<AllocT>;
-    using byte_alloc             = typename alloc_traits::template rebind_alloc<uint8_t>;
-    using byte_alloc_traits      = std::allocator_traits<byte_alloc>;
-    using is_cardinality_tag     = std::integral_constant<sample_strategy, sample_strategy::cardinality>;
-    using is_universe_tag        = std::integral_constant<sample_strategy, sample_strategy::universe>;
-    using strategy_tag           = std::integral_constant<sample_strategy, Strategy>;
+    using alloc_traits       = std::allocator_traits<AllocT>;
+    using byte_alloc         = typename alloc_traits::template rebind_alloc<uint8_t>;
+    using byte_alloc_traits  = std::allocator_traits<byte_alloc>;
+    using is_cardinality_tag = std::integral_constant<sample_strategy, sample_strategy::cardinality>;
+    using is_universe_tag    = std::integral_constant<sample_strategy, sample_strategy::universe>;
+    using strategy_tag       = std::integral_constant<sample_strategy, Strategy>;
     
     static constexpr size_t DATA_WIDTH = 
         Strategy == sample_strategy::cardinality || Strategy == sample_strategy::universe  
