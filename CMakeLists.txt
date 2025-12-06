@@ -14,6 +14,7 @@ set(YAEF_BENCHMARKS_DIR "${YAEF_TEST_DIR}/benchmarks")
 # normal library options
 option(YAEF_OPTS_ENABLE_TESTS "enable unit tests" OFF)
 option(YAEF_OPTS_ENABLE_BENCHMARKS "enable benchmarks" OFF)
+option(YAEF_OPTS_FORCE_NO_AVX512 "force disable AVX512" OFF)
 
 # development-only options
 option(_YAEF_DEV_OPTS_ENABLE_TEMP_RESULT_OUTPUT "(DEV-only) output the intemediate assembly code" OFF)
@@ -28,7 +29,10 @@ macro(yaef_fatal _msg)
   message(FATAL_ERROR "[yaef] ${_msg}${rem_msg}")
 endmacro()
 
-if(MSVC)
+if(YAEF_OPTS_FORCE_NO_AVX512)
+  set(YAEF_HAVE_AVX512 FALSE)
+  yaef_info("since YAEF_OPTS_FORCE_NO_AVX512 is TRUE, AVX-512 will not be considered")
+elseif(MSVC)
   set(YAEF_HAVE_AVX512 FALSE)
 else()
   set(YAEF_AVX512_COPTS
@@ -36,7 +40,6 @@ else()
     "-mavx512vbmi" "-mavx512vbmi2" "-mavx512vpopcntdq" "-mavx512bitalg"
   )
   string(JOIN " " YAEF_AVX512_COPTS_STRING "${YAEF_AVX512_COPTS}")
-
   yaef_info("checking for AVX-512 support with flags: ${YAEF_AVX512_COPTS_STRING}")
   check_cxx_compiler_flag("${YAEF_AVX512_COPTS_STRING}" YAEF_HAVE_AVX512)
 endif()
@@ -58,7 +61,7 @@ add_library(yaef::yaef ALIAS yaef)
 target_include_directories(yaef INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 if(YAEF_HAVE_AVX512)
-  yaef_info("AVX-512 enabled")
+  yaef_info("AVX-512 is enabled")
   target_compile_definitions(yaef INTERFACE _YAEF_INTRINSICS_HAVE_AVX512)
   target_compile_options(yaef INTERFACE ${YAEF_AVX512_COPTS})
 endif()
