@@ -7783,7 +7783,7 @@ public:
     using const_pointer    = const value_type *;
     using pointer          = const_pointer;
     using allocator_type   = AllocT;
-    using sample_list      = sparse_sampled_list<value_type, sample_strategy::universe>;
+    using sample_list      = eliasfano_list<value_type>;
 
     static constexpr size_t NUM_METHODS    = sizeof...(Methods);
     static constexpr size_t PARTITION_SIZE = details::DEFAULT_HYBRID_PARTITION_SIZE;
@@ -7883,13 +7883,17 @@ public:
         const size_type num_partitions = details::bits64::idiv_ceil(num_elems, PARTITION_SIZE);
         const value_type minval = first[0];
 
-        const size_type num_samples = num_partitions + 1;
-        const unsigned_value_type sample_range =
-            static_cast<unsigned_value_type>(first[num_elems - 1]) -
-            static_cast<unsigned_value_type>(first[0]);
-        const size_type samples_bits = 
-            (details::bits64::idiv_ceil(sample_range, sample_list::SAMPLE_RATE) + 1) * sizeof(size_type) * CHAR_BIT +
-            num_samples * sizeof(value_type);
+        size_type samples_bits = 0;
+        {
+            const size_type num_samples = num_partitions + 1;
+            const unsigned_value_type u =
+                static_cast<unsigned_value_type>(first[num_elems - 1]) -
+                static_cast<unsigned_value_type>(first[0]);
+            const uint32_t low_width = details::bits64::bit_width(u / num_samples);
+            const size_type num_low_bits = low_width * num_samples;
+            const size_type num_high_bits = (u >> low_width) + num_samples + 1;
+            samples_bits = num_low_bits + num_high_bits;
+        }
 
         const size_type partition_desc_bits = PARTITION_DESC_BYTES * num_partitions * CHAR_BIT;
 
@@ -8002,9 +8006,9 @@ public:
 
         unsigned_value_type t = to_stored_value(target);
         
-        auto sample_iter = partition_samples_.upper_bound(t) - 1;
+        auto sample_iter = std::prev(partition_samples_.upper_bound(t));
         unsigned_value_type sample = *sample_iter;
-        size_type partition_index = std::distance(partition_samples_.begin(), sample_iter);
+        size_type partition_index = sample_iter.to_index();
         
         const uint64_t partition_desc = *reinterpret_cast<const uint64_t *>(
             partition_descs_ + PARTITION_DESC_BYTES * partition_index) & PARTITION_DESC_MASK;
