@@ -3405,14 +3405,18 @@ public:
         const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
         const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
 
-        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(zeros_samples_), 
-            sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
-            return error_code::serialize_io;
+        if (zeros_num_l1_samples != 0) {
+            if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(zeros_samples_), 
+                sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
+                return error_code::serialize_io;
+            }
         }
 
-        if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(ones_samples_), 
-            sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
-            return error_code::serialize_io;
+        if (ones_num_l1_samples != 0) {
+            if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(ones_samples_), 
+                sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
+                return error_code::serialize_io;
+            }
         }
 
         return error_code::success;
@@ -3432,17 +3436,20 @@ public:
         using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
         balloc_type balloc(alloc);
 
-        zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
-        ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
-
-        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(zeros_samples_), 
-            sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
-            return error_code::deserialize_io;
+        if (zeros_num_l1_samples != 0) {
+            zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
+            if (!deser.read_bytes(reinterpret_cast<uint8_t *>(zeros_samples_), 
+                sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
+                return error_code::deserialize_io;
+            }
         }
 
-        if (!deser.read_bytes(reinterpret_cast<uint8_t *>(ones_samples_), 
-            sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
-            return error_code::deserialize_io;
+        if (ones_num_l1_samples != 0) {
+            ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
+            if (!deser.read_bytes(reinterpret_cast<uint8_t *>(ones_samples_), 
+                sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
+                return error_code::deserialize_io;
+            }
         }
 
         return error_code::success;
