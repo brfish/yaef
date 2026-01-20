@@ -3405,14 +3405,14 @@ public:
         const size_type zeros_num_l1_samples = bits64::idiv_ceil(num_zeros(), L1_SAMPLE_RATE) + 1;
         const size_type ones_num_l1_samples = bits64::idiv_ceil(num_ones(), L1_SAMPLE_RATE) + 1;
 
-        if (zeros_num_l1_samples != 0) {
+        if (bits_.size() != 0) {
             if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(zeros_samples_), 
                 sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
                 return error_code::serialize_io;
             }
         }
 
-        if (ones_num_l1_samples != 0) {
+        if (bits_.size() != 0) {
             if (!ser.write_bytes(reinterpret_cast<const uint8_t *>(ones_samples_), 
                 sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
                 return error_code::serialize_io;
@@ -3436,7 +3436,7 @@ public:
         using balloc_type = typename std::allocator_traits<AllocT>::template rebind_alloc<uint64_t>;
         balloc_type balloc(alloc);
 
-        if (zeros_num_l1_samples != 0) {
+        if (bits_.size() != 0) {
             zeros_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, zeros_num_l1_samples * INTERLEAVE_STEP);
             if (!deser.read_bytes(reinterpret_cast<uint8_t *>(zeros_samples_), 
                 sizeof(uint64_t) * zeros_num_l1_samples * INTERLEAVE_STEP)) {
@@ -3444,7 +3444,7 @@ public:
             }
         }
 
-        if (ones_num_l1_samples != 0) {
+        if (bits_.size() != 0) {
             ones_samples_ = std::allocator_traits<balloc_type>::allocate(balloc, ones_num_l1_samples * INTERLEAVE_STEP);
             if (!deser.read_bytes(reinterpret_cast<uint8_t *>(ones_samples_), 
                 sizeof(uint64_t) * ones_num_l1_samples * INTERLEAVE_STEP)) {
@@ -5633,13 +5633,23 @@ private:
 
         _YAEF_ATTR_NODISCARD size_type rank_one_impl(size_type index, bool *bit_out, std::true_type) const noexcept {
             auto iter = parent_->pos_list_.lower_bound(index);
-            *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
-            return iter.to_index();
+            size_type idx = iter.to_index();
+            if (idx == parent_->pos_list_.size()) {
+                *bit_out = false;
+            } else {
+                *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
+            }
+            return idx;
         }
 
         _YAEF_ATTR_NODISCARD size_type rank_one_impl(size_type index, bool *bit_out, std::false_type) const noexcept {
             auto iter = parent_->pos_list_.lower_bound(index);
-            *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
+            size_type idx = iter.to_index();
+            if (idx == parent_->pos_list_.size()) {
+                *bit_out = true;
+            } else {
+                *bit_out = *iter == index ? INDEXED_BIT_TYPE : !INDEXED_BIT_TYPE;
+            }
             return parent_->size() - iter.to_index();
         }
 
